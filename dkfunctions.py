@@ -24,9 +24,9 @@ path = [x.replace(' ','\ ') for x in os.popen('echo $PYTHONPATH').read().split('
 
 if len(path) > 0:
     version = os.popen('cd {}; git rev-parse HEAD'.format(path[0])).read()
-    __version__ = 'Git SHA1: {}'.format(version)
+    __version__ = 'v0.1 Git SHA1: {}'.format(version)
 else:
-    __version__ = '0.1 {:%Y-%m-%d}'.format(datetime.now())
+    __version__ = 'v0.1 {:%Y-%m-%d}'.format(datetime.now())
 
 def rout_write(x):
     '''
