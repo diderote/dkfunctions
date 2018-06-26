@@ -1,11 +1,9 @@
 #!/usr/bin/env python
 
-__version__ = 0.1
-
 from pybedtools import BedTool
 import pandas as pd
 import os
-import datetime
+from datetime import datetime
 import glob
 import gseapy
 import re
@@ -22,13 +20,21 @@ from math import floor,log10
 from IPython.display import Image,display
 import time
 
+path = [x.replace(' ','\ ') for x in os.popen('echo $PYTHONPATH').read().split(':') if 'dkfunctions' in x.split('/')]
+
+if len(path) > 0:
+    version = os.popen('cd {}; git rev-parse HEAD'.format(path[0])).read()
+    __version__ = 'Git SHA1: {}'.format(version)
+else:
+    __version__ = '0.1 {:%Y-%m-%d}'.format(datetime.now())
+
 def rout_write(x):
     '''
     function for setting r_out to print to file instead of jupyter
     rpy2.rinterface.set_writeconsole_regular(rout_write)
     rpy2.rinterface.set_writeconsole_warnerror(rout_write)
     '''
-    print(x, file=open('{}/R_out_{}.txt'.format(os.getcwd(), datetime.datetime.today().strftime('%Y-%m-%d')), 'a'))
+    print(x, file=open('{}/R_out_{:%Y-%m-%d}.txt'.format(os.getcwd(), datetime.now()), 'a'))
 
 
 def annotate_peaks(dict_of_dfs, folder, genome, db='UCSC', check=False):
@@ -698,7 +704,7 @@ def plot_col(df, title, ylabel, xticks=None, plot_type=('violin'), pvalue=True):
 
     if pvalue:
         _,pvalue = stats.ttest_ind(a=df.iloc[:,0], b=df.iloc[:,1])
-        fig.text(s='pvalue= {:.03g}'.format(pvalue)), x=0, y=-.12, transform=fig.axes.transAxes, fontsize=12)
+        fig.text(s='pvalue= {:.03g}'.format(pvalue), x=0, y=-.12, transform=fig.axes.transAxes, fontsize=12)
     
     sns.despine()
     plt.tight_layout()
@@ -883,9 +889,7 @@ def ssh_job(command_list, job_name, project='nimerlab', threads=1, job_folder=''
     prejob_files = os.popen('ssh pegasus ls {}'.format(job_folder)).read().split('\n')[:-1]
     os.system('scp {}.sh pegasus:{}'.format(job_name, job_folder))
     os.system('ssh pegasus "cd {}; bsub < {}.sh"'.format(job_folder, job_name))
-    print('Submitting {job_name} as ID_{rand_id}: {date}'.format(job_name=job_name,
-                                                                 rand_id=rand_id,
-                                                                 date=str(datetime.datetime.now())))
+    print('Submitting {} as ID_{}: {:%Y-%m-%d %H:%M:%S}'.format(jjob_name,rand_id,datetime.now()))
 
     return (rand_id, job_folder, prejob_files)
 
@@ -911,7 +915,7 @@ def ssh_check(ID, job_folder='', prejob_files=None, wait=True, return_filetype=N
     jobs_list = os.popen('ssh pegasus bhist -w').read()
     job = [j for j in re.findall('ID_(\d+)', jobs_list) if j == ID]
     if len(job) != 0:
-        print('Job ID_{} is not complete: {}'.format(ID, str(datetime.datetime.now())))
+        print('Job ID_{} is not complete: {:%Y-%m-%d %H:%M:%S}'.format(ID, datetime.now()))
     else:
         if os.popen('''ssh pegasus "if [ -f {}/*_logs_{}.stderr* ]; then echo 'True' ; fi"'''.format(job_folder, ID)).read() == 'True\n':
             print('Job ID_{} is finished'.format(ID))
@@ -926,7 +930,7 @@ def ssh_check(ID, job_folder='', prejob_files=None, wait=True, return_filetype=N
             if len(job) == 0:
                 running = False
             else:
-                print('Waiting for jobs to finish... {}'.format(str(datetime.datetime.now())))
+                print('Waiting for jobs to finish... {:%Y-%m-%d %H:%M:%S}'.format(datetime.now()))
                 time.sleep(sleep)
 
     if load:
