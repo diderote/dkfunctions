@@ -573,9 +573,6 @@ def splice_bar(data, title, x, y):
     -------
     None
     '''
-
-    import seaborn as sns
-
     sns.set(context='paper', font='Arial', style='white', font_scale=2)
 
     plot = sns.barplot(x = x, y=y, data = data)
@@ -638,8 +635,6 @@ def enrichr_topterm(gene_list, description, out_dir, top_term, figsize):
     None
 
     '''
-
-    import gseapy
     
     os.makedirs(out_dir, exist_ok=True)
     
@@ -665,21 +660,6 @@ def enrichr_topterm(gene_list, description, out_dir, top_term, figsize):
                    gene_sets='GO_Molecular_Function_2017b', 
                    outdir=out_dir
                   )
-
-def round_sig(x, sig=3):
-    '''
-    Round a float to 3 significant digits.
-
-    Inputs
-    ------
-    x: float
-
-    Returns
-    ------
-    Float
-
-    '''
-    return round(x.astype('float32'), sig-int(floor(log10(abs(x))))-1)
 
 def plot_col(df, title, ylabel, xticks=None, plot_type=('violin'), pvalue=True):
     '''
@@ -718,7 +698,7 @@ def plot_col(df, title, ylabel, xticks=None, plot_type=('violin'), pvalue=True):
 
     if pvalue:
         _,pvalue = stats.ttest_ind(a=df.iloc[:,0], b=df.iloc[:,1])
-        fig.text(s='pvalue= {}'.format(str(round_sig(pvalue))), x=0, y=-.12, transform=fig.axes.transAxes, fontsize=12)
+        fig.text(s='pvalue= {:.03g}'.format(pvalue)), x=0, y=-.12, transform=fig.axes.transAxes, fontsize=12)
     
     sns.despine()
     plt.tight_layout()
@@ -792,7 +772,7 @@ def scatter_regression(df, s=150, alpha=0.3, line_color='dimgrey', svg=False, re
             ax.annotate(index, xy=(x,y), xytext=((x-offx,y+offy) if y>=x else (x+offx, y-offy)), arrowprops={'arrowstyle':'-', 'color': 'black'})
     if reg_stats:
         r,pvalue = stats.pearsonr(x=df.iloc[:,0], y=df.iloc[:,1])
-        ax.text(0,0 , 'r = {}; p-value = {}'.format(round(r,3),round(pvalue,10)), fontsize = 25, transform=ax.transAxes)
+        ax.text(0,0 , 'r = {:.03g}; p-value = {:.03g}'.format(r,pvalue), fontsize = 25, transform=ax.transAxes)
     
     sns.despine(offset= 5)
     fig.tight_layout()
