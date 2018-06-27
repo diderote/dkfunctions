@@ -23,10 +23,10 @@ import time
 path = [x.replace(' ','\ ') for x in os.popen('echo $PYTHONPATH').read().split(':') if 'dkfunctions' in x.split('/')]
 
 if len(path) > 0:
-    version = os.popen('cd {}; git rev-parse HEAD'.format(path[0])).read()
-    __version__ = 'v0.1 Git SHA1: {}'.format(version)
+    version = os.popen('cd {}; git rev-parse HEAD'.format(path[0])).read()[:-1]
+    __version__ = 'v0.1, Git SHA1: {}'.format(version)
 else:
-    __version__ = 'v0.1 {:%Y-%m-%d}'.format(datetime.now())
+    __version__ = 'v0.1, {:%Y-%m-%d}'.format(datetime.now())
 
 def rout_write(x):
     '''
@@ -667,7 +667,7 @@ def enrichr_topterm(gene_list, description, out_dir, top_term, figsize):
                    outdir=out_dir
                   )
 
-def plot_col(df, title, ylabel, xticks=None, plot_type=('violin'), pvalue=True):
+def plot_col(df, title, ylabel, xy=(None,None), xticks=None, plot_type=['violin'], pvalue=False):
     '''
     Two column boxplot from dataframe.  Titles x axis based on column names.
     
@@ -676,9 +676,10 @@ def plot_col(df, title, ylabel, xticks=None, plot_type=('violin'), pvalue=True):
     df: dataframe (uses first two columns)
     title: string of title
     ylabel: string of y label
+    xy: If specified, will x is the label column and y is the data column. (default: (None,None): Data separated into two columns).
     xticks: list of xtick names (default is column name)
-    pvalue: bool to perform ttest (default is True)
-    plot_type: tuple of one or more: violin, box, swarm (default=violin)
+    pvalue: bool to perform ttest (default is False).  Will only work if xy=(None,None) or ther are only two labels in x. 
+    plot_type: list of one or more: violin, box, swarm (default=violin)
 
     Returns
     ------
@@ -689,23 +690,48 @@ def plot_col(df, title, ylabel, xticks=None, plot_type=('violin'), pvalue=True):
     plt.clf()
     sns.set(context='paper', font='Arial', font_scale=2, style='white', rc={'figure.dpi': 300, 'figure.figsize':(5,6)})
     
+    if type(plot_type) != list:
+        plot_type = plot_type.split()
     lower_plot_type = [x.lower() for x in plot_type]
+
+    if len(lower_plot_type) == 0:
+    	raise IOError('Input a plot type.')
+    elif True not in {x in lower_plot_type for x in ['violin', 'box', 'swarm']}
+        raise IOError('Did not recognize plot type.')
+
     if 'violin' in lower_plot_type:
-        fig = sns.violinplot(data=df)
+        if xy == (None,None):
+            fig = sns.violinplot(data=df)
+        else:
+            fig = sns.violinplot(data=df, x=xy[0], y=xy[1])
     if 'box' in lower_plot_type:
-        fig = sns.boxplot(data=df)
+        if xy == (None,None):
+            fig = sns.boxplot(data=df)
+        else:
+            fig = sns.boxplot(data=df, x=xy[0], y=xy[1])
     if 'swarm' in lower_plot_type:
-        fig = sns.swarmplot(data=df, color='dimgrey', s=5)
+        if xy == (None,None):
+            fig = sns.swarmplot(data=df, color='dimgrey', s=5)
+        else:
+            fig = sns.swarmplot(data=df, x=xy[0], y=xy[1], color='dimgrey', s=5)
 
     fig.yaxis.set_label_text(ylabel)
     fig.set_title(title)
     if xticks:
         fig.xaxis.set_ticklabels(xticks)
+        for tick in fig.xaxis.get_ticklabels():
+            tick.set_fontsize(12)
 
     if pvalue:
-        _,pvalue = stats.ttest_ind(a=df.iloc[:,0], b=df.iloc[:,1])
-        fig.text(s='pvalue= {:.03g}'.format(pvalue), x=0, y=-.12, transform=fig.axes.transAxes, fontsize=12)
-    
+        if xy==(None,None):
+            _,pvalue = stats.ttest_ind(a=df.iloc[:,0], b=df.iloc[:,1])
+            fig.text(s='pvalue= {:.03g}'.format(pvalue), x=0, y=-.12, transform=fig.axes.transAxes, fontsize=12)
+        else:
+            compare = df[xy[1]].unique().tolist()
+            if len(compare) == 2:
+                _,pvalue = stats.ttest_ind(a=df[df[xy[1]] == compare[0]].xy[0], b=df[df[xy[1]] == compare[1]].xy[0])
+                fig.text(s='pvalue= {:.03g}'.format(pvalue), x=0, y=-.12, transform=fig.axes.transAxes, fontsize=12)
+        
     sns.despine()
     plt.tight_layout()
     os.makedirs('col_plot/', exist_ok=True)
