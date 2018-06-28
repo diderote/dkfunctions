@@ -667,7 +667,7 @@ def enrichr_topterm(gene_list, description, out_dir, top_term, figsize):
                    outdir=out_dir
                   )
 
-def plot_col(df, title, ylabel, xy=(None,None), xticks=None, plot_type=['violin'], pvalue=False):
+def plot_col(df, title, ylabel, xy=(None,None), xticks=None, plot_type=['violin'], pvalue=False, compare_tags=None, out=''):
     '''
     Two column boxplot from dataframe.  Titles x axis based on column names.
     
@@ -680,6 +680,8 @@ def plot_col(df, title, ylabel, xy=(None,None), xticks=None, plot_type=['violin'
     xticks: list of xtick names (default is column name)
     pvalue: bool to perform ttest (default is False).  Will only work if xy=(None,None) or ther are only two labels in x. 
     plot_type: list of one or more: violin, box, swarm (default=violin)
+    compare_tags:  if xy and pvalue is specified and there are more than two tags in x, specify the tags to compare. eg. ['a','b']
+    out: out parent directory.  if none returns into colplot/
 
     Returns
     ------
@@ -696,9 +698,14 @@ def plot_col(df, title, ylabel, xy=(None,None), xticks=None, plot_type=['violin'
 
     if len(lower_plot_type) == 0:
     	raise IOError('Input a plot type.')
-    elif True not in {x in lower_plot_type for x in ['violin', 'box', 'swarm']}
+    elif True not in {x in lower_plot_type for x in ['violin', 'box', 'swarm']}:
         raise IOError('Did not recognize plot type.')
 
+    if 'swarm' in lower_plot_type:
+        if xy == (None,None):
+            fig = sns.swarmplot(data=df, color='black', s=4)
+        else:
+            fig = sns.swarmplot(data=df, x=xy[0], y=xy[1], color='black', s=4)
     if 'violin' in lower_plot_type:
         if xy == (None,None):
             fig = sns.violinplot(data=df)
@@ -709,35 +716,31 @@ def plot_col(df, title, ylabel, xy=(None,None), xticks=None, plot_type=['violin'
             fig = sns.boxplot(data=df)
         else:
             fig = sns.boxplot(data=df, x=xy[0], y=xy[1])
-    if 'swarm' in lower_plot_type:
-        if xy == (None,None):
-            fig = sns.swarmplot(data=df, color='dimgrey', s=5)
-        else:
-            fig = sns.swarmplot(data=df, x=xy[0], y=xy[1], color='dimgrey', s=5)
 
     fig.yaxis.set_label_text(ylabel)
     fig.set_title(title)
     if xticks:
         fig.xaxis.set_ticklabels(xticks)
+        fig.xaxis.set_label_text('')
         for tick in fig.xaxis.get_ticklabels():
             tick.set_fontsize(12)
 
     if pvalue:
         if xy==(None,None):
             _,pvalue = stats.ttest_ind(a=df.iloc[:,0], b=df.iloc[:,1])
-            fig.text(s='pvalue= {:.03g}'.format(pvalue), x=0, y=-.12, transform=fig.axes.transAxes, fontsize=12)
+            compare_tags = df.columns
         else:
-            compare = df[xy[1]].unique().tolist()
-            if len(compare) == 2:
-                _,pvalue = stats.ttest_ind(a=df[df[xy[1]] == compare[0]].xy[0], b=df[df[xy[1]] == compare[1]].xy[0])
-                fig.text(s='pvalue= {:.03g}'.format(pvalue), x=0, y=-.12, transform=fig.axes.transAxes, fontsize=12)
+            _,pvalue = stats.ttest_ind(a=df[df[xy[0]] == compare_tags[0]][xy[1]], b=df[df[xy[0]] == compare_tags[1]][xy[1]])
+        fig.text(s='p-value = {:.03g}, {} v {}'.format(pvalue,compare_tags[0],compare_tags[1]), x=0, y=-.12, transform=fig.axes.transAxes, fontsize=12)
         
     sns.despine()
     plt.tight_layout()
-    os.makedirs('col_plot/', exist_ok=True)
-    plt.savefig('col_plot/{}.png'.format(title), dpi=300)
+    plt.savefig('{}col_plot/{}.svg'.format(out,title))
+    os.makedirs('{}col_plot/'.format(out), exist_ok=True)
+    plt.subplots_adjust(bottom=0.17, top=0.9)
+    plt.savefig('{}col_plot/{}.png'.format(out,title), dpi=300)
 
-    print('{}.png found in {}/col_plot/'.format(title, os.getcwd()))
+    print('{}.png found in {}col_plot/'.format(title, out))
 
 def scatter_regression(df, s=150, alpha=0.3, line_color='dimgrey', svg=False, reg_stats=True, point_color='steelblue', title=None, 
                        xlabel=None,ylabel=None,IndexA=None,IndexB=None, annotate=None, Alabel='Group A', Blabel='Group B'):
