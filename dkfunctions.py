@@ -273,7 +273,7 @@ def plot_venn3_set(dict_of_sets, string_name_of_overlap, folder):
     '''
     folder = folder + 'venn3/'
     os.makedirs(folder, exist_ok=True)
-    
+
     
     plt.figure(figsize=(7,7))
     
@@ -918,7 +918,7 @@ def ssh_job(command_list, job_name, project='nimerlab', threads=1, job_folder=''
     prejob_files = os.popen('ssh pegasus ls {}'.format(job_folder)).read().split('\n')[:-1]
     os.system('scp {}.sh pegasus:{}'.format(job_name, job_folder))
     os.system('ssh pegasus "cd {}; bsub < {}.sh"'.format(job_folder, job_name))
-    print('Submitting {} as ID_{}: {:%Y-%m-%d %H:%M:%S}'.format(jjob_name,rand_id,datetime.now()))
+    print('Submitting {} as ID_{}: {:%Y-%m-%d %H:%M:%S}'.format(job_name,rand_id,datetime.now()))
 
     return (rand_id, job_folder, prejob_files)
 
