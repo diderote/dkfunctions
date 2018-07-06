@@ -856,7 +856,6 @@ def signature_heatmap(vst, sig, name, cluster_columns=False):
 def image_display(file):
     display(Image(file))
 
-
 def ssh_job(command_list, job_name, project='nimerlab', threads=1, job_folder='', q='general', mem=3000):
     '''
     Sends job to LSF pegasus.ccs.miami.edu
@@ -989,6 +988,78 @@ def ssh_check(ID, job_folder='', prejob_files=None, wait=True, return_filetype=N
                 with open('logs/ID_{}_{}.txt'.format(ID,key)) as file:
                     print(file.read())
 
+def deeptools(regions, signals, matrix_name, out_name, title='', bps=(1500,1500,4000) type='center', scaled_names=('TSS','TES'), make=('matrix','heatmap','heatmap_group','profile', 'profile_group')):
+    '''
+    Inputs
+    ------
+    regions: dictionary {'region_name':'/path/to/ssh/bedfile'}
+    signals: dictionary {'signal_name':'/path/to/ssh/bigwigfile'}
+    matrix_name: string of matrix name or matrix to be named (before .matrix.gz)
+    out_name: name for output file
+    tite: plot title (optional)
+    bps: tuple of region width on either side of center or scaled.  center ignores last number.  default is (1500,1500,4000)
+    type: 'center' or 'scaled'
+    scaled_names: optional names for scaled start and end (default ('TSS','TES'))
+    make: tuple of deeptool commands.  options: matrix, heatmap, heatmap_group, profile, profile_group
+    perGroup: bool  Default False
+
+    Returns
+    -------
+    string of commands for ssh_job
+
+    '''
+    make_lower = (x.lower() for x make)
+
+    if type.lower() == 'center':
+        deepMat = 'reference-point --referencePoint center'
+        deepHeat = "--refPointLabel 'Peak Center'"
+        deepProf = "--refPointLabel 'Peak Center'"
+    else:
+        deepMat = 'scale-regions --regionBodyLength {bp3}'.format(str(bps[2]))
+        deepHeat = '--startLabel {} --endLabel {}'.format(scaled_names[0],scaled_names[1])
+        deepProf = '--startLabel {} --endLabel {}'.format(scaled_names[0],scaled_names[1])
+        
+    cmd_list = []
+
+    if 'matrix' in make_lower:
+        computeMatrix = "computeMatrix {deepMat} -a {bp1} -b {bp2} -p 4 -R {region_path} -S {signal_path} --samplesLabel {signal_name} -o {matrix_name}.matrix.gz".format(
+                                deepMat=deepMat,
+                                bp1=str(bps[0]),
+                                bp2=str(bps[1]),
+                                region_path=' '.join([region_path for region_path in regions.values()]),
+                                signal_path=' '.join([signal_path for signal_path in signals.values()]),
+                                signal_name=' '.join(["{}".format(signal_name) for signal_name in signals.keys()]),
+                                matrix_name=matrix_name
+                                )
+        cmd_list.append(computeMatrix)
+
+    if 'heatmap' in make_lower or 'heatmap_group' in make_lower:
+        plotHeatmap_base = "plotHeatmap -m {matrix_name}.matrix.gz --dpi 300 {deepHeat} --regionsLabel {region_name} --plotTitle {title} --whatToShow 'heatmap and colorbar' --colorMap Reds -out {out_name}_heatmap".format(
+                                matrix_name=matrix_name,
+                                deepHeat=deepHeat,
+                                region_name=' '.join(["{}".format(region_name) for region_name in regions.keys()]),
+                                title=title,
+                                out_name=out_name
+                                )
+        if 'heatmap' in make_lower:
+            cmd_list.append("{}.png".format(plotHeatmap_base))
+        if 'heatmap_group' in make_lower:
+            cmd_list.append("{}_perGroup.png --perGroup".format(plotHeatmap_base))
+
+    if 'profile' in make_lower or 'profile_group' in make_lower:
+        plotProfile_base = "plotProfile -m {matrix_name}.matrix.gz --dpi 300 {deepProf} --plotTitle {title} --regionsLabel {region_name} -out {out_name}_profile".format(
+                                matrix_name=matrix_name,
+                                deepProf=deepProf,
+                                title=title,
+                                region_name = ' '.join(["{}".format(region_name) for region_name in regions.kesy()]),
+                                out_name=out_name
+                                )
+        if 'profile' in make_lower:
+            cmd_list.append("{}.png".format(plotProfile_base))
+        if 'profile_group' in make_lower:
+            cmd_list.append("{}_perGroup.png --perGroup".format(plotProfile_base))
+
+    return cmd_list
 
 '''
 def get_text_positions(x_data, y_data, txt_width, txt_height):
