@@ -935,6 +935,8 @@ def ssh_check(ID, job_folder='', prejob_files=None, wait=True, return_filetype=N
     return_filetype: return file type (ex. .png will search for all .png in job_folder and import it)default=None
     display: whether or not to display imported file
     pre_list: list of contents of job folder brefore execution.
+    check_IO_logs: read output from .err .out logs
+    sleep: seconds to sleep (default 10)
 
     Returns
     ------
@@ -961,6 +963,7 @@ def ssh_check(ID, job_folder='', prejob_files=None, wait=True, return_filetype=N
             else:
                 print('Waiting for jobs to finish... {:%Y-%m-%d %H:%M:%S}'.format(datetime.now()))
                 time.sleep(sleep)
+        print('Job ID_{} is finished'.format(ID))
 
     if load:
         os.makedirs('ssh_files/{}/'.format(ID), exist_ok=True)
