@@ -988,7 +988,7 @@ def ssh_check(ID, job_folder='', prejob_files=None, wait=True, return_filetype=N
                 with open('logs/ID_{}_{}.txt'.format(ID,key)) as file:
                     print(file.read())
 
-def deeptools(regions, signals, matrix_name, out_name, title='', bps=(1500,1500,4000) type='center', scaled_names=('TSS','TES'), make=('matrix','heatmap','heatmap_group','profile', 'profile_group')):
+def deeptools(regions, signals, matrix_name, out_name, title='', bps=(1500,1500,4000), type='center', scaled_names=('TSS','TES'), make=('matrix','heatmap','heatmap_group','profile', 'profile_group')):
     '''
     Inputs
     ------
@@ -1008,7 +1008,7 @@ def deeptools(regions, signals, matrix_name, out_name, title='', bps=(1500,1500,
     string of commands for ssh_job
 
     '''
-    make_lower = (x.lower() for x make)
+    make_lower = (x.lower() for x in make)
 
     if type.lower() == 'center':
         deepMat = 'reference-point --referencePoint center'
