@@ -19,7 +19,9 @@ from scipy import stats
 from math import floor,log10
 from IPython.display import Image,display
 import time
+from tqdm import tqdm_notebook 
 
+#Get Current Git Commit Hash for version
 path = [x.replace(' ','\ ') for x in os.popen('echo $PYTHONPATH').read().split(':') if 'dkfunctions' in x.split('/')]
 
 if len(path) > 0:
@@ -36,11 +38,9 @@ def rout_write(x):
     '''
     print(x, file=open('{}/R_out_{:%Y-%m-%d}.txt'.format(os.getcwd(), datetime.now()), 'a'))
 
-
 def annotate_peaks(dict_of_dfs, folder, genome, db='UCSC', check=False):
     '''
     Annotate a dictionary of dataframes from bed files to the genome using ChIPseeker and Ensembl annotations.
-    Distal intergenic peaks are not annotated to nearest gene.
 
     Inputs
     ------
@@ -48,6 +48,7 @@ def annotate_peaks(dict_of_dfs, folder, genome, db='UCSC', check=False):
     folder: output folder
     genome: hg38, hg19, mm10
     db: default UCSC, but can also accept Ensembl
+    check: bool. checks whether annotation file already exists
 
     Returns
     -------
@@ -64,12 +65,10 @@ def annotate_peaks(dict_of_dfs, folder, genome, db='UCSC', check=False):
     makeGR = ro.r("makeGRangesFromDataFrame")
     as_df = ro.r("as.data.frame")    
 
-
-    check_df = {key:os.path.isfile('{}{}.txt'.format(folder,key)) for key in dict_of_dfs.keys()}
+    check_df = {key:os.path.isfile('{}{}_annotated.txt'.format(folder,key.replace(' ','_'))) for key in dict_of_dfs.keys()}
     return_bool = False not in set(check_df.values())
     if return_bool & check:
-        return {'{}_annotated'.format(key):pd.from_csv('{}{}.txt'.format(folder,key), index_col=0, header=0, sep="\t") for key in dict_of_dfs.keys()}
-
+        return {'{}_annotated'.format(key):pd.from_csv('{}{}_annotated.txt'.format(folder,key.replace(' ','_')), index_col=0, header=0, sep="\t") for key in dict_of_dfs.keys()}
 
     if db.lower() == 'ucsc':
         species = ('Mmusculus' if genome.lower() == 'mm10' else 'Hsapiens')
@@ -93,16 +92,17 @@ def annotate_peaks(dict_of_dfs, folder, genome, db='UCSC', check=False):
 
     return_dict={}
     
-    for key, df in dict_of_dfs.items():
+    print('Annotating Peaks...')
+    for key, df in tqdm_notebook(dict_of_dfs.items()):
         if check & check_df[key]:
-            return_dict['{}_annotated'.format(key)] = pd.from_csv('{}{}.txt'.format(folder,key), index_col=0, header=0, sep="\t")
+            return_dict['{}_annotated'.format(key)] = pd.from_csv('{}{}_annotated.txt'.format(folder,key.replace(' ','_')), index_col=0, header=0, sep="\t")
         else:
             col_len=len(df.columns)
             df.columns = ["chr","start","end"] + list(range(col_len - 3))
             GR = makeGR(df)
             GR_anno = chipseeker.annotatePeak(GR, overlap='all', TxDb=txdb, annoDb=anno)
             return_dict['{}_annotated'.format(key)] = ro.pandas2ri.ri2py(chipseeker.as_data_frame_csAnno(GR_anno))
-            return_dict['{}_annotated'.format(key)].to_csv('{}{}.txt'.format(folder,key),index=True, header=True, sep="\t")
+            return_dict['{}_annotated'.format(key)].to_csv('{}{}_annotated.txt'.format(folder,key.replace(' ','_')),index=True, header=True, sep="\t")
     
     return return_dict
 
@@ -142,21 +142,21 @@ def plot_peak_genomic_annotation(dict_of_df,folder):
     
     GR={}
     GR_anno={}
-    for key, df in dict_of_df.items():
+    for key, df in tqdm_notebook(dict_of_df.items()):
         col_len=len(df.columns)
         df.columns = ["chr","start","end"] + list(range(col_len - 3))
         GR[key] = makeGR(df)
         GR_anno[key] = chipseeker.annotatePeak(GR[key], overlap='all', TxDb=txdb, annoDb="org.Hs.eg.db")
 
-        grdevices.png(file='{}/{}_annoBar.png'.format(out,key), width=512, height=256)
+        grdevices.png(file='{}/{}_annoBar.png'.format(out,key.replace(' ','_')), width=512, height=256)
         plot(chipseeker.plotAnnoBar(GR_anno[key]))
         grdevices.dev_off()
 
-        grdevices.png(file='{}/{}_TSS_Bar.png'.format(out,key), width=512, height=256)
+        grdevices.png(file='{}/{}_TSS_Bar.png'.format(out,key.replace(' ','_')), width=512, height=256)
         plot(chipseeker.plotDistToTSS(GR_anno[key]))
         grdevices.dev_off()
 
-        grdevices.png(file='{}/{}_annoData.png'.format(out,key), width=1000, height=500)
+        grdevices.png(file='{}/{}_annoData.png'.format(out,key).replace(' ','_'), width=1000, height=500)
         upsetplot(GR_anno[key], vennpie=True)
         grdevices.dev_off()
     
@@ -166,7 +166,8 @@ def plot_venn2(Series, string_name_of_overlap, folder):
     Plots a 2 way venn.
     Saves to file.
     '''
-    folder = '{}venn2/'.format(folder)
+    
+    folder = '{}venn2/'.format(folder) if folder.endswith('/') else '{}/venn2/'.format(folder)
     os.makedirs(folder, exist_ok=True)
     
     plt.figure(figsize=(7,7))
@@ -196,8 +197,8 @@ def plot_venn2(Series, string_name_of_overlap, folder):
      
     plt.title(string_name_of_overlap + " overlaps")
     plt.tight_layout()
-    plt.savefig('{}{}-overlap.svg'.format(folder, string_name_of_overlap))
-    plt.savefig('{}{}-overlap.png'.format(folder, string_name_of_overlap), dpi=300)
+    plt.savefig('{}{}-overlap.svg'.format(folder, string_name_of_overlap.replace(' ','_')))
+    plt.savefig('{}{}-overlap.png'.format(folder, string_name_of_overlap.replace(' ','_')), dpi=300)
     
 def plot_venn2_set(dict_of_sets, string_name_of_overlap, folder):
     '''
@@ -215,7 +216,7 @@ def plot_venn2_set(dict_of_sets, string_name_of_overlap, folder):
     None
 
     '''
-    folder = folder + 'venn2/'
+    folder = '{}venn2/'.format(folder) if folder.endswith('/') else '{}/venn2/'.format(folder)
     os.makedirs(folder, exist_ok=True)
     
     plt.figure(figsize=(7,7))
@@ -232,8 +233,7 @@ def plot_venn2_set(dict_of_sets, string_name_of_overlap, folder):
     for name,setlist in dict_of_sets.items():
         set_list.append(setlist)
         set_names.append(name)
-    
-    
+        
     #make venn
     venn_plot = venn2(subsets=set_list, set_labels = set_names)
     patch=['10','01','11']
@@ -252,8 +252,8 @@ def plot_venn2_set(dict_of_sets, string_name_of_overlap, folder):
      
     plt.title(string_name_of_overlap + " overlaps")
     plt.tight_layout()
-    plt.savefig('{}{}-overlap.svg'.format(folder, string_name_of_overlap))
-    plt.savefig('{}{}-overlap.png'.format(folder, string_name_of_overlap), dpi=300)
+    plt.savefig('{}{}-overlap.svg'.format(folder, string_name_of_overlap.replace(' ','_')))
+    plt.savefig('{}{}-overlap.png'.format(folder, string_name_of_overlap.replace(' ','_')), dpi=300)
 
 def plot_venn3_set(dict_of_sets, string_name_of_overlap, folder):
     '''  
@@ -271,10 +271,9 @@ def plot_venn3_set(dict_of_sets, string_name_of_overlap, folder):
     None
 
     '''
-    folder = folder + 'venn3/'
+    folder = '{}venn3/'.format(folder) if folder.endswith('/') else '{}/venn3/'.format(folder)
     os.makedirs(folder, exist_ok=True)
 
-    
     plt.figure(figsize=(7,7))
     
     font = {'family': 'sans-serif',
@@ -307,10 +306,10 @@ def plot_venn3_set(dict_of_sets, string_name_of_overlap, folder):
         circle.set_alpha(0.8)
         circle.set_linewidth(4)
      
-    plt.title(string_name_of_overlap + " Overlaps")
+    plt.title("{} Overlaps".format(string_name_of_overlap))
     plt.tight_layout()
-    plt.savefig('{}{}-overlap.svg'.format(folder, string_name_of_overlap))
-    plt.savefig('{}{}-overlap.png'.format(folder, string_name_of_overlap), dpi=300)
+    plt.savefig('{}{}-overlap.svg'.format(folder, string_name_of_overlap.replace(' ','_')))
+    plt.savefig('{}{}-overlap.png'.format(folder, string_name_of_overlap.replace(' ','_')), dpi=300)
     
 def plot_venn3_counts(element_list, set_labels, string_name_of_overlap, folder):
     '''    
@@ -329,7 +328,7 @@ def plot_venn3_counts(element_list, set_labels, string_name_of_overlap, folder):
     None
 
     '''
-    folder = '{}venn3/'.format(folder)
+    folder = '{}venn3/'.format(folder) if folder.endswith('/') else '{}/venn3/'.format(folder)
     os.makedirs(folder, exist_ok=True)
     
     
@@ -359,10 +358,10 @@ def plot_venn3_counts(element_list, set_labels, string_name_of_overlap, folder):
         circle.set_alpha(0.8)
         circle.set_linewidth(4)
      
-    plt.title(string_name_of_overlap + " Overlaps")
+    plt.title("{} Overlaps".format(string_name_of_overlap))
     plt.tight_layout()
-    plt.savefig('{}{}-overlap.svg'.format(folder, string_name_of_overlap))
-    plt.savefig('{}{}-overlap.png'.format(folder, string_name_of_overlap), dpi=300)
+    plt.savefig('{}{}-overlap.svg'.format(folder, string_name_of_overlap.replace(' ','_')))
+    plt.savefig('{}{}-overlap.png'.format(folder, string_name_of_overlap.replace(' ','_')), dpi=300)
     
 def overlap_two(bed_dict, genome=None):
     '''
@@ -387,7 +386,7 @@ def overlap_two(bed_dict, genome=None):
     names = list(bed_dict.keys())
 
     Folder = '{}/'.format(os.getcwd())
-    subfolder = '{}_{}_overlap/'.format(names[0], names[1])
+    subfolder = '{}_{}_overlap/'.format(names[0].replace(' ','_'), names[1].replace(' ','_'))
     
     out = '{}{}'.format(Folder, subfolder)
     os.makedirs(out, exist_ok=True)
@@ -401,10 +400,9 @@ def overlap_two(bed_dict, genome=None):
         overlap_dict[key] = masterfile.intersect(sorted_dict[key]).intersect(list(other.values())[0], v=True)
 
     for key,bed in overlap_dict.items():
-        bed.to_dataframe().to_csv('{}{}{}-peaks-from-mergedPeaks.txt'.format(Folder, subfolder, key),
+        bed.to_dataframe().to_csv('{}{}{}-unique-peaks-from-mergedPeaks.bed'.format(Folder, subfolder, key.replace(' ','_')),
                                   header=None, index=None, sep="\t")
     
-
     overlap_numbers = pd.Series({names[0]: len(overlap_dict[names[0]]),
                                  names[1]: len(overlap_dict[names[1]]),
                                  'overlap': len(overlap_dict['overlap'])
@@ -418,11 +416,11 @@ def overlap_two(bed_dict, genome=None):
                '{}{}'.format(Folder,subfolder)
               )
     if bool(genome):
-    
+        print('Annotating overlaping peaks...')
         #Annotate with ChIPseeker
         unikey='{}_unique'
         unianno='{}_unique_annotated'
-        return_dict = annotate_peaks({unikey.format(key):bed.to_dataframe() for key,bed in overlap_dict.items()}, '{}{}'.format(Folder,subfolder), genome=genome)
+        return_dict = annotate_peaks({unikey.format(key):bed.to_dataframe() for key,bed in tqdm_notebook(overlap_dict.items())}, '{}{}'.format(Folder,subfolder), genome=genome)
 
         Set1_unique = set(return_dict[unianno.format(names[0])].SYMBOL.unique().tolist())
         Set2_unique = set(return_dict[unianno.format(names[1])].SYMBOL.unique().tolist()) 
@@ -517,7 +515,7 @@ def overlap_three(bed_dict, genome=None):
     names = list(bed_dict.keys())
 
     Folder = '{}/'.format(os.getcwd())
-    subfolder = '{}_{}_{}_overlap/'.format(names[0], names[1], names[2])
+    subfolder = '{}-{}-{}-overlap/'.format(names[0].replace(' ','_'), names[1].replace(' ','_'), names[2].replace(' ','_'))
     
     out = '{}{}'.format(Folder, subfolder)
     os.makedirs(out, exist_ok=True)
@@ -547,13 +545,14 @@ def overlap_three(bed_dict, genome=None):
     plot_venn3_counts(lenTup[4:], names, '', out)
 
     for key,bed in sorted_dict.items():
-        bed.to_dataframe().to_csv('{}{}-peaks-from-mergedPeaks.txt'.format(out, key),
+        bed.to_dataframe().to_csv('{}{}-peaks-from-mergedPeaks.bed'.format(out, key.replace(' ','_')),
                                   header=None, index=None, sep="\t")
 
     if bool(genome):
+        print('Annotating ovelapped peaks...')
         unikey='{}_unique'
         unianno='{}_unique_annotated'
-        return_dict = annotate_peaks({unikey.format(key):bed.to_dataframe() for key,bed in sorted_dict.items()}, out, genome=genome)
+        return_dict = annotate_peaks({unikey.format(key):bed.to_dataframe() for key,bed in tqdm_notebook(sorted_dict.items())}, out, genome=genome)
 
         Set1=set(return_dict[unianno.format('A')].SYMBOL.unique().tolist())
         Set2=set(return_dict[unianno.format('B')].SYMBOL.unique().tolist())
@@ -586,7 +585,7 @@ def splice_bar(data, title, x, y):
     plot.set_ylabel('')
 
     sns.despine()
-    sns.utils.plt.savefig('{}.png'.format(title), dpi=300)
+    sns.utils.plt.savefig('{}.png'.format(title.replace(' ','_')), dpi=300)
 
 def make_df(dict_of_sets, name):
     '''
@@ -604,8 +603,7 @@ def make_df(dict_of_sets, name):
 
     '''
 
-
-    out_dir='{pwd}/{name}/'.format(pwd=os.getcwd(), name=name)
+    out_dir='{pwd}/{name}/'.format(pwd=os.getcwd(), name=name.replace(' ','_'))
     os.makedirs(out_dir, exist_ok=True)
     
     count = 0
@@ -617,7 +615,7 @@ def make_df(dict_of_sets, name):
     for key,genes in dict_of_sets.items():
         df[key] = pd.Series(list(genes) + ['NA']*(count-len(genes)))
     
-    df.to_excel('{}/{}.xls'.format(out_dir,name), index=False)
+    df.to_excel('{}/{}.xls'.format(out_dir,name.replace(' ','_')), index=False)
 
     return df
 
@@ -667,7 +665,7 @@ def enrichr_topterm(gene_list, description, out_dir, top_term, figsize):
                    outdir=out_dir
                   )
 
-def plot_col(df, title, ylabel, xy=(None,None), xticks=None, plot_type=['violin'], pvalue=False, compare_tags=None, out=''):
+def plot_col(df, title, ylabel, out, xy=(None,None), xticks=None, plot_type=['violin'], pvalue=False, compare_tags=None):
     '''
     Two column boxplot from dataframe.  Titles x axis based on column names.
     
@@ -689,6 +687,8 @@ def plot_col(df, title, ylabel, xy=(None,None), xticks=None, plot_type=['violin'
     Saves .png to file in 'col_plot/' folder in cwd named as title.  dpi:300
     
     '''
+    out = out if out.endswith('/') else '{}/'.format(out) 
+
     plt.clf()
     sns.set(context='paper', font='Arial', font_scale=2, style='white', rc={'figure.dpi': 300, 'figure.figsize':(5,6)})
     
@@ -735,12 +735,12 @@ def plot_col(df, title, ylabel, xy=(None,None), xticks=None, plot_type=['violin'
         
     sns.despine()
     plt.tight_layout()
-    plt.savefig('{}col_plot/{}.svg'.format(out,title))
+    plt.savefig('{}col_plot/{}.svg'.format(out,title.replace(' ','_')))
     os.makedirs('{}col_plot/'.format(out), exist_ok=True)
     plt.subplots_adjust(bottom=0.17, top=0.9)
-    plt.savefig('{}col_plot/{}.png'.format(out,title), dpi=300)
+    plt.savefig('{}col_plot/{}.png'.format(out,title.replace(' ','_')), dpi=300)
 
-    print('{}.png found in {}col_plot/'.format(title, out))
+    print('{}.png found in {}col_plot/'.format(title,replace(' ','_'), out))
 
 def scatter_regression(df, s=150, alpha=0.3, line_color='dimgrey', svg=False, reg_stats=True, point_color='steelblue', title=None, 
                        xlabel=None,ylabel=None,IndexA=None,IndexB=None, annotate=None, Alabel='Group A', Blabel='Group B'):
@@ -815,10 +815,10 @@ def scatter_regression(df, s=150, alpha=0.3, line_color='dimgrey', svg=False, re
     os.makedirs('scatter_regression/', exist_ok=True)
     
     if svg:
-        plt.savefig('scatter_regression/{}.svg'.format(title))
-    plt.savefig('scatter_regression/{}.png'.format(title), dpi=300)
+        plt.savefig('scatter_regression/{}.svg'.format(title.replace(' ','_')))
+    plt.savefig('scatter_regression/{}.png'.format(title.replace(' ','_')), dpi=300)
 
-    print('{}.png found in {}/scatter_regression/'.format(title, os.getcwd()))
+    print('{}.png found in {}/scatter_regression/'.format(title.replace(' ','_'), os.getcwd()))
 
 
 def signature_heatmap(vst, sig, name, cluster_columns=False):
@@ -850,13 +850,13 @@ def signature_heatmap(vst, sig, name, cluster_columns=False):
                         z_score=0, method='complete', cmap='RdBu_r', 
                         yticklabels=False, col_cluster=cluster_columns)
     CM.fig.suptitle(name)
-    CM.savefig('{}_Heatmap.png'.format(name), dpi=300)
-    CM.savefig('{}_Heatmap.svg'.format(name))
+    CM.savefig('{}_Heatmap.png'.format(name.replace(' ','_')), dpi=300)
+    CM.savefig('{}_Heatmap.svg'.format(name.replace(' ','_')))
 
 def image_display(file):
     display(Image(file))
 
-def ssh_job(command_list, job_name, project='nimerlab', threads=1, job_folder='', q='general', mem=3000):
+def ssh_job(command_list, job_name, job_folder, project='nimerlab', threads=1, q='general', mem=3000):
     '''
     Sends job to LSF pegasus.ccs.miami.edu
 
@@ -877,10 +877,8 @@ def ssh_job(command_list, job_name, project='nimerlab', threads=1, job_folder=''
     Tuple(rand_id, job_folder, prejob_files)
 
     '''
-    if job_folder[0] != '/':
-        job_folder = '/nethome/dlk41/{}'.format(job_folder)
-    if job_folder[-1] != '/':
-        job_folder += '/'
+    
+    jobfolder = job_folder if job_folder.endswith('/') else '{}/'.format(job_folder)
 
     os.system('ssh pegasus mkdir {}'.format(job_folder))
 
@@ -898,10 +896,10 @@ def ssh_job(command_list, job_name, project='nimerlab', threads=1, job_folder=''
 #BSUB -q {q}
 #BSUB -P {project}
 
-{str_comd_list}'''.format(job_name = job_name,
+{str_comd_list}'''.format(job_name = job_name.replace(' ','_'),
                           job_folder=job_folder,
-                          job_name_o=job_name,
-                          job_name_e=job_name,
+                          job_name_o=job_name.replace(' ','_'),
+                          job_name_e=job_name.replace(' ','_'),
                           str_comd_list=str_comd_list,
                           random_number=rand_id,
                           rand_id=rand_id,
@@ -911,17 +909,17 @@ def ssh_job(command_list, job_name, project='nimerlab', threads=1, job_folder=''
                           threads=threads
                          )
     
-    with open('{}.sh'.format(job_name), 'w') as file:
+    with open('{}.sh'.format(job_name.replace(' ','_')), 'w') as file:
         file.write(cmd)
 
     prejob_files = os.popen('ssh pegasus ls {}'.format(job_folder)).read().split('\n')[:-1]
-    os.system('scp {}.sh pegasus:{}'.format(job_name, job_folder))
-    os.system('ssh pegasus "cd {}; bsub < {}.sh"'.format(job_folder, job_name))
+    os.system('scp {}.sh pegasus:{}'.format(job_name.replace(' ','_'), job_folder))
+    os.system('ssh pegasus "cd {}; bsub < {}.sh"'.format(job_folder, job_name.replace(' ','_')))
     print('Submitting {} as ID_{}: {:%Y-%m-%d %H:%M:%S}'.format(job_name,rand_id,datetime.now()))
 
     return (rand_id, job_folder, prejob_files)
 
-def ssh_check(ID, job_folder='', prejob_files=None, wait=True, return_filetype=None, load=False, check_IO_logs=None, sleep=10):
+def ssh_check(ID, job_folder, prejob_files=None, wait=True, return_filetype=None, load=False, check_IO_logs=None, sleep=10):
     '''
     Checks for pegasus jobs sent by ssh_job and prints contents of the log file.  
     Optionally copies and/or loads the results file.
@@ -942,6 +940,8 @@ def ssh_check(ID, job_folder='', prejob_files=None, wait=True, return_filetype=N
     None
 
     '''
+    jobfolder = job_folder if job_folder.endswith('/') else '{}/'.format(job_folder)
+
     jobs_list = os.popen('ssh pegasus bhist -w').read()
     job = [j for j in re.findall('ID_(\d+)', jobs_list) if j == ID]
     if len(job) != 0:
@@ -982,13 +982,13 @@ def ssh_check(ID, job_folder='', prejob_files=None, wait=True, return_filetype=N
               }
         os.makedirs('logs/', exist_ok=True)
         for key,log in logs.items():
-            os.system('scp pegasus:{} logs/ID_{}_{}.txt'.format(log, ID, key))
+            os.system("scp 'pegasus:{}' 'logs/ID_{}_{}.txt'".format(log, ID, key))
             if os.path.isfile('logs/ID_{}_{}.txt'.format(ID,key)):
                 print('logs/ID_{} {}:'.format(ID,key))
                 with open('logs/ID_{}_{}.txt'.format(ID,key)) as file:
                     print(file.read())
 
-def deeptools(regions, signals, matrix_name, out_name, title='', bps=(1500,1500,4000), type='center', scaled_names=('TSS','TES'), make=('matrix','heatmap','heatmap_group','profile', 'profile_group')):
+def deeptools(regions, signals, matrix_name, out_name, pegasus_folder, title='', bps=(1500,1500,4000), type='center', scaled_names=('TSS','TES'), make=('matrix','heatmap','heatmap_group','profile', 'profile_group')):
     '''
     Inputs
     ------
@@ -1001,14 +1001,18 @@ def deeptools(regions, signals, matrix_name, out_name, title='', bps=(1500,1500,
     type: 'center' or 'scaled'
     scaled_names: optional names for scaled start and end (default ('TSS','TES'))
     make: tuple of deeptool commands.  options: matrix, heatmap, heatmap_group, profile, profile_group
-    perGroup: bool  Default False
+    copy: bool.  Copy region and signal files to peagasus
+    copy_folder: folder to copy into
 
     Returns
     -------
     string of commands for ssh_job
 
     '''
-    make_lower = (x.lower() for x in make)
+    pegasus_folder = pegasus_folder if pegasus_folder.endswith('/') else '{}/'.format(pegasus_folder)
+    os.system('ssh pegasus; mkdir {}'.format(pegasus_folder))
+
+    make_lower = [x.lower() for x in make]
 
     if type.lower() == 'center':
         deepMat = 'reference-point --referencePoint center'
@@ -1019,22 +1023,39 @@ def deeptools(regions, signals, matrix_name, out_name, title='', bps=(1500,1500,
         deepHeat = '--startLabel {} --endLabel {}'.format(scaled_names[0],scaled_names[1])
         deepProf = '--startLabel {} --endLabel {}'.format(scaled_names[0],scaled_names[1])
         
-    cmd_list = []
+    cmd_list = ['module rm python share-rpms65', 'source activate deeptools']
+    
+    print('Copying region files to pegasus...')
+    for region in tqdm_notebook(regions.values()):
+        if os.popen('''ssh pegasus "if [ -f {}{} ]; then echo 'True' ; fi"'''.format(pegasus_folder, region.split('/')[-1])).read() != 'True\n':
+            print('Copying {} to pegasus at {}.'.format(region,pegasus_folder))
+            os.system("scp {} pegasus:{}".format(region,pegasus_folder))
+        else:
+            print('{} found in {}.'.format(region,pegasus_folder))
+    
+    print('Copying signal files to pegasus...')
+    for signal in tqdm_notebook(signals.values()):
+        if os.popen('''ssh pegasus "if [ -f {}/{} ]; then echo 'True' ; fi"'''.format(pegasus_folder, signal.split('/')[-1])).read() != 'True\n':
+            print('Copying {} to {}.'.format(signal, pegasus_folder))
+            os.system("scp {} pegasus:{}".format(signal,pegasus_folder))
+
+    pegasus_region_path = ' '.join(["{}{}".format(pegasus_folder,region_path.split('/')[-1]) for region_path in regions.values()])
+    pegasus_signal_path = ' '.join(["{}{}".format(pegasus_folder,signal_path.split('/')[-1]) for signal_path in signals.values()])
 
     if 'matrix' in make_lower:
         computeMatrix = "computeMatrix {deepMat} -a {bp1} -b {bp2} -p 4 -R {region_path} -S {signal_path} --samplesLabel {signal_name} -o {matrix_name}.matrix.gz".format(
                                 deepMat=deepMat,
                                 bp1=str(bps[0]),
                                 bp2=str(bps[1]),
-                                region_path=' '.join([region_path for region_path in regions.values()]),
-                                signal_path=' '.join([signal_path for signal_path in signals.values()]),
+                                region_path=pegasus_region_path,
+                                signal_path=pegasus_signal_path,
                                 signal_name=' '.join(["{}".format(signal_name) for signal_name in signals.keys()]),
                                 matrix_name=matrix_name
                                 )
         cmd_list.append(computeMatrix)
 
     if 'heatmap' in make_lower or 'heatmap_group' in make_lower:
-        plotHeatmap_base = "plotHeatmap -m {matrix_name}.matrix.gz --dpi 300 {deepHeat} --regionsLabel {region_name} --plotTitle {title} --whatToShow 'heatmap and colorbar' --colorMap Reds -out {out_name}_heatmap".format(
+        plotHeatmap_base = "plotHeatmap -m {matrix_name}.matrix.gz --dpi 300 {deepHeat} --regionsLabel {region_name} --plotTitle '{title}' --whatToShow 'heatmap and colorbar' --colorMap Reds -out {out_name}_heatmap".format(
                                 matrix_name=matrix_name,
                                 deepHeat=deepHeat,
                                 region_name=' '.join(["{}".format(region_name) for region_name in regions.keys()]),
@@ -1047,11 +1068,11 @@ def deeptools(regions, signals, matrix_name, out_name, title='', bps=(1500,1500,
             cmd_list.append("{}_perGroup.png --perGroup".format(plotHeatmap_base))
 
     if 'profile' in make_lower or 'profile_group' in make_lower:
-        plotProfile_base = "plotProfile -m {matrix_name}.matrix.gz --dpi 300 {deepProf} --plotTitle {title} --regionsLabel {region_name} -out {out_name}_profile".format(
+        plotProfile_base = "plotProfile -m {matrix_name}.matrix.gz --dpi 300 {deepProf} --plotTitle '{title}' --regionsLabel {region_name} -out {out_name}_profile".format(
                                 matrix_name=matrix_name,
                                 deepProf=deepProf,
                                 title=title,
-                                region_name = ' '.join(["{}".format(region_name) for region_name in regions.kesy()]),
+                                region_name = ' '.join(["{}".format(region_name) for region_name in regions.keys()]),
                                 out_name=out_name
                                 )
         if 'profile' in make_lower:
