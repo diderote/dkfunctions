@@ -19,7 +19,7 @@ from scipy import stats
 from math import floor,log10
 from IPython.display import Image,display
 import time
-from tqdm import tqdm_notebook 
+from tqdm import tqdm,tqdm_notebook 
 
 #Get Current Git Commit Hash for version
 path = [x.replace(' ','\ ') for x in os.popen('echo $PYTHONPATH').read().split(':') if 'dkfunctions' in x.split('/')]
@@ -915,11 +915,11 @@ def ssh_job(command_list, job_name, job_folder, project='nimerlab', threads=1, q
     prejob_files = os.popen('ssh pegasus ls {}'.format(job_folder)).read().split('\n')[:-1]
     os.system('scp {}.sh pegasus:{}'.format(job_name.replace(' ','_'), job_folder))
     os.system('ssh pegasus "cd {}; bsub < {}.sh"'.format(job_folder, job_name.replace(' ','_')))
-    print('Submitting {} as ID_{}: {:%Y-%m-%d %H:%M:%S}'.format(job_name,rand_id,datetime.now()))
+    print('Submitting {} as ID_{} from folder {}: {:%Y-%m-%d %H:%M:%S}'.format(job_name,job_folder,rand_id,datetime.now()))
 
-    return (rand_id, job_folder, prejob_files)
+    return (rand_id, job_folder, prejob_files, job_name)
 
-def ssh_check(ID, job_folder, prejob_files=None, wait=True, return_filetype=None, load=False, check_IO_logs=None, sleep=10):
+def ssh_check(ID, job_folder, prejob_files=None, wait=True, return_filetype=None, load=False, check_IO_logs=None, sleep=10, job_name=''):
     '''
     Checks for pegasus jobs sent by ssh_job and prints contents of the log file.  
     Optionally copies and/or loads the results file.
@@ -934,6 +934,7 @@ def ssh_check(ID, job_folder, prejob_files=None, wait=True, return_filetype=None
     pre_list: list of contents of job folder brefore execution.
     check_IO_logs: read output from .err .out logs
     sleep: seconds to sleep (default 10)
+    job_name: pepends local ssh folder with job name if provided
 
     Returns
     ------
@@ -973,8 +974,9 @@ def ssh_check(ID, job_folder, prejob_files=None, wait=True, return_filetype=None
         import_files = [file for file in post_files if file not in prejob_files]
 
         for file in import_files:
-            os.system('scp pegasus:{} ssh_files/{}/{}'.format(file, ID, file.split('/')[-1]))
-            image_display('ssh_files/{}/{}'.format(ID,file.split('/')[-1]))
+            print('Copying {} to {}/ssh_files/{}{}/'.format(file, os.getcwd(), job_name,ID))
+            os.system('scp pegasus:{} ssh_files/{}{}/{}'.format(file, job_name,ID,file.split('/')[-1]))
+            image_display('ssh_files/{}{}/{}'.format(job_name,ID,file.split('/')[-1]))
 
     if check_IO_logs:
         logs= {'ErrorFile':'{}/*_logs_{}.stderr*'.format(job_folder, ID),
@@ -1010,7 +1012,7 @@ def deeptools(regions, signals, matrix_name, out_name, pegasus_folder, title='',
 
     '''
     pegasus_folder = pegasus_folder if pegasus_folder.endswith('/') else '{}/'.format(pegasus_folder)
-    os.system('ssh pegasus; mkdir {}'.format(pegasus_folder))
+    os.system("ssh pegasus 'mkdir {}'".format(pegasus_folder))
 
     make_lower = [x.lower() for x in make]
 
