@@ -20,6 +20,7 @@ from math import floor,log10
 from IPython.display import Image,display
 import time
 from tqdm import tqdm,tqdm_notebook 
+import subprocess
 
 #Get Current Git Commit Hash for version
 path = [x.replace(' ','\ ') for x in os.popen('echo $PYTHONPATH').read().split(':') if 'dkfunctions' in x.split('/')]
@@ -665,7 +666,7 @@ def enrichr_topterm(gene_list, description, out_dir, top_term, figsize):
                    outdir=out_dir
                   )
 
-def plot_col(df, title, ylabel, out, xy=(None,None), xticks=None, plot_type=['violin'], pvalue=False, compare_tags=None):
+def plot_col(df, title, ylabel, out='', xy=(None,None), xticks=None, plot_type=['violin'], pvalue=False, compare_tags=None):
     '''
     Two column boxplot from dataframe.  Titles x axis based on column names.
     
@@ -684,10 +685,13 @@ def plot_col(df, title, ylabel, out, xy=(None,None), xticks=None, plot_type=['vi
     Returns
     ------
     None
-    Saves .png to file in 'col_plot/' folder in cwd named as title.  dpi:300
+    
     
     '''
-    out = out if out.endswith('/') else '{}/'.format(out) 
+    if len(out) != 0:
+        out = out if out.endswith('/') else '{}/'.format(out)
+    out = '{}colplot/'.format(out)
+    os.makedirs(out, exist_ok=True)
 
     plt.clf()
     sns.set(context='paper', font='Arial', font_scale=2, style='white', rc={'figure.dpi': 300, 'figure.figsize':(5,6)})
@@ -735,12 +739,11 @@ def plot_col(df, title, ylabel, out, xy=(None,None), xticks=None, plot_type=['vi
         
     sns.despine()
     plt.tight_layout()
-    plt.savefig('{}col_plot/{}.svg'.format(out,title.replace(' ','_')))
-    os.makedirs('{}col_plot/'.format(out), exist_ok=True)
+    plt.savefig('{}{}.svg'.format(out,title.replace(' ','_')))
     plt.subplots_adjust(bottom=0.17, top=0.9)
-    plt.savefig('{}col_plot/{}.png'.format(out,title.replace(' ','_')), dpi=300)
+    plt.savefig('{}{}.png'.format(out,title.replace(' ','_')), dpi=300)
 
-    print('{}.png found in {}col_plot/'.format(title,replace(' ','_'), out))
+    print('{}.png found in {}/'.format(title.replace(' ','_'), out))
 
 def scatter_regression(df, s=150, alpha=0.3, line_color='dimgrey', svg=False, reg_stats=True, point_color='steelblue', title=None, 
                        xlabel=None,ylabel=None,IndexA=None,IndexB=None, annotate=None, Alabel='Group A', Blabel='Group B'):
@@ -880,7 +883,7 @@ def ssh_job(command_list, job_name, job_folder, project='nimerlab', threads=1, q
     
     jobfolder = job_folder if job_folder.endswith('/') else '{}/'.format(job_folder)
 
-    os.system('ssh pegasus mkdir {}'.format(job_folder))
+    os.system('ssh pegasus mkdir -p {}'.format(job_folder))
 
     rand_id = str(random.randint(0, 100000))
     str_comd_list =  '\n'.join(command_list)
@@ -915,7 +918,7 @@ def ssh_job(command_list, job_name, job_folder, project='nimerlab', threads=1, q
     prejob_files = os.popen('ssh pegasus ls {}'.format(job_folder)).read().split('\n')[:-1]
     os.system('scp {}.sh pegasus:{}'.format(job_name.replace(' ','_'), job_folder))
     os.system('ssh pegasus "cd {}; bsub < {}.sh"'.format(job_folder, job_name.replace(' ','_')))
-    print('Submitting {} as ID_{} from folder {}: {:%Y-%m-%d %H:%M:%S}'.format(job_name,job_folder,rand_id,datetime.now()))
+    print('Submitting {} as ID_{} from folder {}: {:%Y-%m-%d %H:%M:%S}'.format(job_name,rand_id, job_folder,datetime.now()))
 
     return (rand_id, job_folder, prejob_files, job_name)
 
