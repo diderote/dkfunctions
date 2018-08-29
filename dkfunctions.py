@@ -1,13 +1,19 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
+
+# various functions and mixins for downstream genomic and epigenomic anlyses
+
+import os
+import glob
+import re
+import random
+from datetime import datetime
+import time
+import subprocess
+from math import floor,log10
 
 from pybedtools import BedTool
 import pandas as pd
-import os
-from datetime import datetime
-import glob
 import gseapy
-import re
-import random
 import rpy2.robjects as ro
 import rpy2.rinterface as ri
 from rpy2.robjects.packages import importr
@@ -16,11 +22,7 @@ from matplotlib_venn import venn2, venn2_circles, venn3, venn3_circles
 import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy import stats
-from math import floor,log10
 from IPython.display import Image,display
-import time
-from tqdm import tqdm,tqdm_notebook 
-import subprocess
 
 #Get Current Git Commit Hash for version
 path = [x.replace(' ','\ ') for x in os.popen('echo $PYTHONPATH').read().split(':') if 'dkfunctions' in x.split('/')]
@@ -94,7 +96,7 @@ def annotate_peaks(dict_of_dfs, folder, genome, db='UCSC', check=False):
     return_dict={}
     
     print('Annotating Peaks...')
-    for key, df in tqdm_notebook(dict_of_dfs.items()):
+    for key, df in dict_of_dfs.items():
         if check & check_df[key]:
             return_dict['{}_annotated'.format(key)] = pd.from_csv('{}{}_annotated.txt'.format(folder,key.replace(' ','_')), index_col=0, header=0, sep="\t")
         else:
@@ -107,7 +109,7 @@ def annotate_peaks(dict_of_dfs, folder, genome, db='UCSC', check=False):
     
     return return_dict
 
-def plot_peak_genomic_annotation(dict_of_df,folder):
+def plot_peak_genomic_annotation(dict_of_df,folder,genome):
     '''
     Plots genomic annotation graphs.
 
@@ -124,26 +126,37 @@ def plot_peak_genomic_annotation(dict_of_df,folder):
     pandas2ri.activate()
     ri.set_writeconsole_regular(rout_write)
     ri.set_writeconsole_warnerror(rout_write)
+    
+    species = ('Mmusculus' if genome.lower() == 'mm10' else 'Hsapiens')
+
+    TxDb = importr('TxDb.{}.UCSC.{}.knownGene'.format(species, genome.lower()))
+    txdb = ro.r('txdb <- TxDb.{}.UCSC.{}.knownGene'.format(species, genome.lower()))
+
+    if genome.lower() == 'mm10':
+        annoDb = importr('org.Mm.eg.db')
+        anno = 'org.Mm.eg.db'
+    elif genome.lower() == 'hg38' or genome.lower() == 'hg19':
+        annoDb = importr('org.Hs.eg.db')
+        anno = 'org.Hs.eg.db'
 
     chipseeker = ro.packages.importr('ChIPseeker')
-    TxDb = ro.packages.importr('TxDb.Hsapiens.UCSC.hg38.knownGene')
-    annoDb = ro.packages.importr('org.Hs.eg.db')
-    makeGR = ro.r("makeGRangesFromDataFrame")
+    grdevices = ro.packages.importr('grDevices')
     annotatePeak = ro.r('annotatePeak')
-    txdb = ro.r('txdb <- TxDb.Hsapiens.UCSC.hg38.knownGene')
+    makeGR = ro.r("makeGRangesFromDataFrame")
     as_df = ro.r("as.data.frame")
     c = ro.r('c')
     lapply= ro.r('lapply')
     upsetplot = ro.r('upsetplot')
-    grdevices = ro.packages.importr('grDevices')
     plot = ro.r('plot')
     
+
+
     out = folder + 'all_peak_annotation'
     os.makedirs(out, exist_ok=True)
     
     GR={}
     GR_anno={}
-    for key, df in tqdm_notebook(dict_of_df.items()):
+    for key, df in dict_of_df.items():
         col_len=len(df.columns)
         df.columns = ["chr","start","end"] + list(range(col_len - 3))
         GR[key] = makeGR(df)
@@ -421,7 +434,7 @@ def overlap_two(bed_dict, genome=None):
         #Annotate with ChIPseeker
         unikey='{}_unique'
         unianno='{}_unique_annotated'
-        return_dict = annotate_peaks({unikey.format(key):bed.to_dataframe() for key,bed in tqdm_notebook(overlap_dict.items())}, '{}{}'.format(Folder,subfolder), genome=genome)
+        return_dict = annotate_peaks({unikey.format(key):bed.to_dataframe() for key,bed in overlap_dict.items()}, '{}{}'.format(Folder,subfolder), genome=genome)
 
         Set1_unique = set(return_dict[unianno.format(names[0])].SYMBOL.unique().tolist())
         Set2_unique = set(return_dict[unianno.format(names[1])].SYMBOL.unique().tolist()) 
@@ -553,7 +566,7 @@ def overlap_three(bed_dict, genome=None):
         print('Annotating ovelapped peaks...')
         unikey='{}_unique'
         unianno='{}_unique_annotated'
-        return_dict = annotate_peaks({unikey.format(key):bed.to_dataframe() for key,bed in tqdm_notebook(sorted_dict.items())}, out, genome=genome)
+        return_dict = annotate_peaks({unikey.format(key):bed.to_dataframe() for key,bed in sorted_dict.items()}, out, genome=genome)
 
         Set1=set(return_dict[unianno.format('A')].SYMBOL.unique().tolist())
         Set2=set(return_dict[unianno.format('B')].SYMBOL.unique().tolist())
@@ -1031,7 +1044,7 @@ def deeptools(regions, signals, matrix_name, out_name, pegasus_folder, title='',
     cmd_list = ['module rm python share-rpms65', 'source activate deeptools']
     
     print('Copying region files to pegasus...')
-    for region in tqdm_notebook(regions.values()):
+    for region in regions.values():
         if os.popen('''ssh pegasus "if [ -f {}{} ]; then echo 'True' ; fi"'''.format(pegasus_folder, region.split('/')[-1])).read() != 'True\n':
             print('Copying {} to pegasus at {}.'.format(region,pegasus_folder))
             os.system("scp {} pegasus:{}".format(region,pegasus_folder))
@@ -1039,7 +1052,7 @@ def deeptools(regions, signals, matrix_name, out_name, pegasus_folder, title='',
             print('{} found in {}.'.format(region,pegasus_folder))
     
     print('Copying signal files to pegasus...')
-    for signal in tqdm_notebook(signals.values()):
+    for signal in signals.values():
         if os.popen('''ssh pegasus "if [ -f {}/{} ]; then echo 'True' ; fi"'''.format(pegasus_folder, signal.split('/')[-1])).read() != 'True\n':
             print('Copying {} to {}.'.format(signal, pegasus_folder))
             os.system("scp {} pegasus:{}".format(signal,pegasus_folder))
