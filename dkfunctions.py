@@ -1108,7 +1108,7 @@ def deeptools(regions, signals, matrix_name, out_name, pegasus_folder, title='',
 
 
 def gsea_barplot(out_dir,pos_file,neg_file,gmt_name,max_number=20):
-        '''
+    '''
     Inputs
     ------
     out_dir: directory output or '' for current directory
@@ -1122,7 +1122,7 @@ def gsea_barplot(out_dir,pos_file,neg_file,gmt_name,max_number=20):
     string of save file
 
     '''
-
+    
     out_dir = out_dir if out_dir.endswith('/') else '{}/'.format(out_dir)
     out_dir = '' if out_dir == '/' else out_dir 
     pos = pd.read_table(pos_file).head(max_number) if os.path.isfile(pos_file) else pd.DataFrame(columns=['FDR q-val'])
