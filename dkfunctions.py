@@ -33,6 +33,14 @@ if len(path) > 0:
 else:
     __version__ = 'v0.1, {:%Y-%m-%d}'.format(datetime.now())
 
+def read_pd(file,*args,**kwargs):
+    if (file.split('.')[-1] == 'txt') or (file.split('.')[-1] == 'tab'):
+        return pd.read_table(file, header= 0, index_col=0, *args, **kwargs)
+    elif (file.split('.')[-1] == 'xls') or (file.split('.')[-1] == 'xlsx'):
+        return pd.read_excel(file, *args, **kwargs)
+    else:
+        raise IOError("Cannot parse count matrix.  Make sure it is .txt, .xls, or .xlsx")
+
 def rout_write(x):
     '''
     function for setting r_out to print to file instead of jupyter
@@ -149,8 +157,6 @@ def plot_peak_genomic_annotation(dict_of_df,folder,genome):
     upsetplot = ro.r('upsetplot')
     plot = ro.r('plot')
     
-
-
     out = folder + 'all_peak_annotation'
     os.makedirs(out, exist_ok=True)
     
@@ -1099,6 +1105,52 @@ def deeptools(regions, signals, matrix_name, out_name, pegasus_folder, title='',
             cmd_list.append("{}_perGroup.png --perGroup".format(plotProfile_base))
 
     return cmd_list
+
+
+def gsea_barplot(out_dir,pos_file,neg_file,gmt_name,max_number=20):
+        '''
+    Inputs
+    ------
+    out_dir: directory output or '' for current directory
+    pos_file: GSEA positive enrichment .xls file
+    neg_file: GSEA negative enrichment .xls file
+    gmt_name: name of enrichment (ex: Hallmarks)
+    max_number: max number of significant sets to report (default 20)
+
+    Returns
+    -------
+    string of save file
+
+    '''
+
+    out_dir = out_dir if out_dir.endswith('/') else '{}/'.format(out_dir)
+    out_dir = '' if out_dir == '/' else out_dir 
+    pos = pd.read_table(pos_file).head(max_number) if os.path.isfile(pos_file) else pd.DataFrame(columns=['FDR q-val'])
+    pos[gmt_name] = [' '.join(name.split('_')[1:]) for name in pos.NAME.tolist()]
+    neg = pd.read_table(neg_file).head(max_number) if os.path.isfile(neg_file) else pd.DataFrame(columns=['FDR q-val'])
+    neg[gmt_name] = [' '.join(name.split('_')[1:]) for name in neg.NAME.tolist()]
+    
+    sns.set(context='paper', font='Arial',font_scale=.95, style='white', rc={'figure.dpi': 300, 'figure.figsize':(6,6)})
+    fig,(ax1,ax2) = dk.plt.subplots(ncols=1, nrows=2)
+    fig.suptitle('{} GSEA enrichment\n(q<0.05, max {})'.format(gmt_name, max_number))
+    
+    if len(pos[pos['FDR q-val'] < 0.05]) > 0:
+        UP = sns.barplot(data=pos[pos['FDR q-val'] < 0.05], x = 'NES', y=gmt_name, color='firebrick', ax=ax1)
+        UP.set_title('Positive Enrichment')
+        sns.despine()
+       
+    if len(neg[neg['FDR q-val'] < 0.05]) > 0:
+        DN = sns.barplot(data=neg[neg['FDR q-val'] < 0.05], x = 'NES', y=gmt_name, color='steelblue', ax=ax2)
+        DN.set_title('Negative Enrichment')
+        sns.despine()
+    
+    plt.tight_layout(h_pad=2,w_pad=1)
+    plt.subplots_adjust(top=0.88)
+    file='{}{}_GSEA_NES_plot.png'.format(out_dir,gmt_name)
+    fig.savefig(file, dpi=300)
+    plt.close()
+
+    return file
 
 '''
 def get_text_positions(x_data, y_data, txt_width, txt_height):
