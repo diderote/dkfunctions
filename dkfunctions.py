@@ -1125,6 +1125,7 @@ def gsea_barplot(out_dir,pos_file,neg_file,gmt_name,max_number=20):
     
     out_dir = out_dir if out_dir.endswith('/') else '{}/'.format(out_dir)
     out_dir = '' if out_dir == '/' else out_dir 
+    os.makedirs(out_dir, exist_ok=True)
     pos = pd.read_table(pos_file).head(max_number) if os.path.isfile(pos_file) else pd.DataFrame(columns=['FDR q-val'])
     pos[gmt_name] = [' '.join(name.split('_')[1:]) for name in pos.NAME.tolist()]
     neg = pd.read_table(neg_file).head(max_number) if os.path.isfile(neg_file) else pd.DataFrame(columns=['FDR q-val'])
