@@ -49,6 +49,13 @@ def rout_write(x):
     '''
     print(x, file=open('{}/R_out_{:%Y-%m-%d}.txt'.format(os.getcwd(), datetime.now()), 'a'))
 
+def alert_me(text):
+    '''
+    Send me a pop up alert to macosx.
+    '''
+
+    os.system('''osascript -e 'tell Application "System Events" to display dialog "{}"' '''.format(text))
+
 def annotate_peaks(dict_of_dfs, folder, genome, db='UCSC', check=False):
     '''
     Annotate a dictionary of dataframes from bed files to the genome using ChIPseeker and Ensembl annotations.
@@ -200,7 +207,7 @@ def plot_venn2(Series, string_name_of_overlap, folder):
     plt.rc('font', **font)
   
     #make venn
-    venn_plot = venn2(subsets=(Series.iloc[0], Series.iloc[1], Series.iloc[2]), set_labels = Series.index.tolist())
+    venn_plot = venn2(subsets=(Series.iloc[0], Series.iloc[1], Series.iloc[2]), set_labels = [name.replace('_',' ') for name in Series.index.tolist()])
     patch=['10','01','11']
     colors=['green','blue','teal']
     for patch,color in zip(patch,colors):
@@ -215,7 +222,7 @@ def plot_venn2(Series, string_name_of_overlap, folder):
         circle.set_alpha(0.8)
         circle.set_linewidth(3)
      
-    plt.title(string_name_of_overlap + " overlaps")
+    plt.title(string_name_of_overlap.replace('_',' ') + " overlaps")
     plt.tight_layout()
     plt.savefig('{}{}-overlap.svg'.format(folder, string_name_of_overlap.replace(' ','_')))
     plt.savefig('{}{}-overlap.png'.format(folder, string_name_of_overlap.replace(' ','_')), dpi=300)
@@ -252,7 +259,7 @@ def plot_venn2_set(dict_of_sets, string_name_of_overlap, folder):
     set_names = []
     for name,setlist in dict_of_sets.items():
         set_list.append(setlist)
-        set_names.append(name)
+        set_names.append(name.replace('_',' '))
         
     #make venn
     venn_plot = venn2(subsets=set_list, set_labels = set_names)
@@ -270,7 +277,7 @@ def plot_venn2_set(dict_of_sets, string_name_of_overlap, folder):
         circle.set_alpha(0.8)
         circle.set_linewidth(3)
      
-    plt.title(string_name_of_overlap + " overlaps")
+    plt.title(string_name_of_overlap.replace('_', ' ') + " overlaps")
     plt.tight_layout()
     plt.savefig('{}{}-overlap.svg'.format(folder, string_name_of_overlap.replace(' ','_')))
     plt.savefig('{}{}-overlap.png'.format(folder, string_name_of_overlap.replace(' ','_')), dpi=300)
@@ -307,7 +314,7 @@ def plot_venn3_set(dict_of_sets, string_name_of_overlap, folder):
     set_names = []
     for name,setlist in dict_of_sets.items():
         set_list.append(setlist)
-        set_names.append(name)
+        set_names.append(name.replace('_',' '))
     
     #make venn
     venn_plot = venn3(subsets=set_list, set_labels = set_names)
@@ -326,7 +333,7 @@ def plot_venn3_set(dict_of_sets, string_name_of_overlap, folder):
         circle.set_alpha(0.8)
         circle.set_linewidth(4)
      
-    plt.title("{} Overlaps".format(string_name_of_overlap))
+    plt.title("{} Overlaps".format(string_name_of_overlap.replace('_', ' ')))
     plt.tight_layout()
     plt.savefig('{}{}-overlap.svg'.format(folder, string_name_of_overlap.replace(' ','_')))
     plt.savefig('{}{}-overlap.png'.format(folder, string_name_of_overlap.replace(' ','_')), dpi=300)
@@ -362,7 +369,7 @@ def plot_venn3_counts(element_list, set_labels, string_name_of_overlap, folder):
     plt.rc('font', **font)
     
     #make venn
-    venn_plot = venn3(subsets=element_list, set_labels = set_labels)
+    venn_plot = venn3(subsets=element_list, set_labels = [name.replace('_',' ') for name in set_labels])
     patch=['100','110','101','010','011','001','111']
     for p in patch:
         if venn_plot.get_patch_by_id(p):
@@ -378,7 +385,7 @@ def plot_venn3_counts(element_list, set_labels, string_name_of_overlap, folder):
         circle.set_alpha(0.8)
         circle.set_linewidth(4)
      
-    plt.title("{} Overlaps".format(string_name_of_overlap))
+    plt.title("{} Overlaps".format(string_name_of_overlap.replace('_', ' ')))
     plt.tight_layout()
     plt.savefig('{}{}-overlap.svg'.format(folder, string_name_of_overlap.replace(' ','_')))
     plt.savefig('{}{}-overlap.png'.format(folder, string_name_of_overlap.replace(' ','_')), dpi=300)
@@ -417,14 +424,14 @@ def overlap_two(bed_dict, genome=None):
     overlap_dict = {'overlap':masterfile.intersect(sorted_dict[names[0]]).intersect(sorted_dict[names[1]])}
     for key,bed in sorted_dict.items():
         other = {other_key:other_bed for other_key,other_bed in sorted_dict.items() if other_key != key}
-        overlap_dict[key] = masterfile.intersect(sorted_dict[key]).intersect(list(other.values())[0], v=True)
+        overlap_dict['{}_unique_peak'.format(key)] = masterfile.intersect(sorted_dict[key]).intersect(list(other.values())[0], v=True)
 
     for key,bed in overlap_dict.items():
         bed.to_dataframe().to_csv('{}{}{}-unique-peaks-from-mergedPeaks.bed'.format(Folder, subfolder, key.replace(' ','_')),
                                   header=None, index=None, sep="\t")
     
-    overlap_numbers = pd.Series({names[0]: len(overlap_dict[names[0]]),
-                                 names[1]: len(overlap_dict[names[1]]),
+    overlap_numbers = pd.Series({names[0]: len(overlap_dict['{}_unique_peak'.format(names[0])]),
+                                 names[1]: len(overlap_dict['{}_unique_peak'.format(names[1])]),
                                  'overlap': len(overlap_dict['overlap'])
                                  },
                                 index=[names[0], names[1],'overlap']         
@@ -442,8 +449,8 @@ def overlap_two(bed_dict, genome=None):
         unianno='{}_unique_annotated'
         return_dict = annotate_peaks({unikey.format(key):bed.to_dataframe() for key,bed in overlap_dict.items()}, '{}{}'.format(Folder,subfolder), genome=genome)
 
-        Set1_unique = set(return_dict[unianno.format(names[0])].SYMBOL.unique().tolist())
-        Set2_unique = set(return_dict[unianno.format(names[1])].SYMBOL.unique().tolist()) 
+        Set1_unique = set(return_dict[unianno.format('{}_unique_peak'.format(names[0]))].SYMBOL.unique().tolist())
+        Set2_unique = set(return_dict[unianno.format('{}_unique_peak'.format(names[1]))].SYMBOL.unique().tolist()) 
         Overlap_Set = set(return_dict[unianno.format('overlap')].SYMBOL.unique().tolist())
 
         venn2_dict = {names[0]: (Set1_unique | Overlap_Set),
@@ -498,17 +505,20 @@ def enrichr(gene_list, description, out_dir):
     gseapy.enrichr(gene_list=gene_list,
                    description='{}_KEGG'.format(description),
                    gene_sets='KEGG_2016', 
-                   outdir=out_dir
+                   outdir=out_dir,
+                   format='png'
                    )
     gseapy.enrichr(gene_list=gene_list,
                    description='{}_GO_biological_process'.format(description),
                    gene_sets='GO_Biological_Process_2017b', 
-                   outdir=out_dir
+                   outdir=out_dir,
+                   format='png'
                   )
     gseapy.enrichr(gene_list=gene_list, 
                    description='{}_GO_molecular_function'.format(description),
                    gene_sets='GO_Molecular_Function_2017b', 
-                   outdir=out_dir
+                   outdir=out_dir,
+                   format='png'
                   )
 
 def overlap_three(bed_dict, genome=None):
@@ -601,7 +611,7 @@ def splice_bar(data, title, x, y):
     sns.set(context='paper', font='Arial', style='white', font_scale=2)
 
     plot = sns.barplot(x = x, y=y, data = data)
-    plot.set_title(title)
+    plot.set_title(title.replace('_', ' '))
     plot.set_ylabel('')
 
     sns.despine()
@@ -685,7 +695,7 @@ def enrichr_topterm(gene_list, description, out_dir, top_term, figsize):
                    outdir=out_dir
                   )
 
-def plot_col(df, title, ylabel, out='', xy=(None,None), xticks=None, plot_type=['violin'], pvalue=False, compare_tags=None):
+def plot_col(df, title, ylabel, out='', xy=(None,None), xticks=[''], plot_type=['violin'], pvalue=False, compare_tags=None):
     '''
     Two column boxplot from dataframe.  Titles x axis based on column names.
     
@@ -741,7 +751,7 @@ def plot_col(df, title, ylabel, out='', xy=(None,None), xticks=None, plot_type=[
             fig = sns.boxplot(data=df, x=xy[0], y=xy[1])
 
     fig.yaxis.set_label_text(ylabel)
-    fig.set_title(title)
+    fig.set_title(title.replace('_',' '))
     if xticks:
         fig.xaxis.set_ticklabels(xticks)
         fig.xaxis.set_label_text('')
@@ -813,7 +823,7 @@ def scatter_regression(df, s=150, alpha=0.3, line_color='dimgrey', svg=False, re
     if ylabel:
         plt.ylabel(ylabel, labelpad = 10)
     if title:
-        regplot.set_title(title)
+        regplot.set_title(title.replace('_', ' '))
     if type(IndexA) in [list,set]:
         A = set(IndexA)
         Abool = [True if x in IndexA else False for x in df.index.tolist()]
@@ -871,7 +881,7 @@ def signature_heatmap(vst, sig, name, cluster_columns=False):
     CM = sns.clustermap(vst[vst.gene_name.apply(lambda x: x in sig)].drop('gene_name',axis=1),
                         z_score=0, method='complete', cmap='RdBu_r', 
                         yticklabels=False, col_cluster=cluster_columns)
-    CM.fig.suptitle(name)
+    CM.fig.suptitle(name.replace('_',' '))
     CM.savefig('{}_Heatmap.png'.format(name.replace(' ','_')), dpi=300)
     CM.savefig('{}_Heatmap.svg'.format(name.replace(' ','_')))
 
@@ -1083,7 +1093,7 @@ def deeptools(regions, signals, matrix_name, out_name, pegasus_folder, title='',
                                 matrix_name=matrix_name,
                                 deepHeat=deepHeat,
                                 region_name=' '.join(["{}".format(region_name) for region_name in regions.keys()]),
-                                title=title,
+                                title=title.replace('_',' '),
                                 out_name=out_name
                                 )
         if 'heatmap' in make_lower:
@@ -1095,7 +1105,7 @@ def deeptools(regions, signals, matrix_name, out_name, pegasus_folder, title='',
         plotProfile_base = "plotProfile -m {matrix_name}.matrix.gz --dpi 300 {deepProf} --plotTitle '{title}' --regionsLabel {region_name} -out {out_name}_profile".format(
                                 matrix_name=matrix_name,
                                 deepProf=deepProf,
-                                title=title,
+                                title=title.replace('_',' '),
                                 region_name = ' '.join(["{}".format(region_name) for region_name in regions.keys()]),
                                 out_name=out_name
                                 )
