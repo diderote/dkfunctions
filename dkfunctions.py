@@ -8,11 +8,11 @@ import re
 import random
 from datetime import datetime
 import time
-import subprocess
-from math import floor,log10
+from math import floor, log10
 
 from pybedtools import BedTool
 import pandas as pd
+import numpy as np
 import gseapy
 import rpy2.robjects as ro
 import rpy2.rinterface as ri
@@ -20,26 +20,29 @@ from rpy2.robjects.packages import importr
 from rpy2.robjects import pandas2ri
 from matplotlib_venn import venn2, venn2_circles, venn3, venn3_circles
 import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
 import seaborn as sns
 from scipy import stats
-from IPython.display import Image,display
+from IPython.display import Image, display
 
-#Get Current Git Commit Hash for version
-path = [x.replace(' ','\ ') for x in os.popen('echo $PYTHONPATH').read().split(':') if 'dkfunctions' in x.split('/')]
+# Get Current Git Commit Hash for version
+path = [x.replace(' ', r'\ ') for x in os.popen('echo $PYTHONPATH').read().split(':') if 'dkfunctions' in x.split('/')]
 
 if len(path) > 0:
-    version = os.popen('cd {}; git rev-parse HEAD'.format(path[0])).read()[:-1]
-    __version__ = 'v0.1, Git SHA1: {}'.format(version)
+    version = os.popen(f'cd {path[0]}; git rev-parse HEAD').read()[:-1]
+    __version__ = f'v0.1, Git SHA1: {version}'
 else:
-    __version__ = 'v0.1, {:%Y-%m-%d}'.format(datetime.now())
+    __version__ = f'v0.1, {datetime.now():%Y-%m-%d}'
 
-def read_pd(file,*args,**kwargs):
+
+def read_pd(file, *args, **kwargs):
     if (file.split('.')[-1] == 'txt') or (file.split('.')[-1] == 'tab'):
-        return pd.read_table(file, header= 0, index_col=0, *args, **kwargs)
+        return pd.read_table(file, header=0, index_col=0, *args, **kwargs)
     elif (file.split('.')[-1] == 'xls') or (file.split('.')[-1] == 'xlsx'):
         return pd.read_excel(file, *args, **kwargs)
     else:
         raise IOError("Cannot parse count matrix.  Make sure it is .txt, .xls, or .xlsx")
+
 
 def rout_write(x):
     '''
@@ -47,14 +50,16 @@ def rout_write(x):
     rpy2.rinterface.set_writeconsole_regular(rout_write)
     rpy2.rinterface.set_writeconsole_warnerror(rout_write)
     '''
-    print(x, file=open('{}/R_out_{:%Y-%m-%d}.txt'.format(os.getcwd(), datetime.now()), 'a'))
+    print(x, file=open(f'{os.getcwd()}/R_out_{datetime.now():%Y-%m-%d}.txt', 'a'))
+
 
 def alert_me(text):
     '''
     Send me a pop up alert to macosx.
     '''
 
-    os.system('''osascript -e 'tell Application "System Events" to display dialog "{}"' '''.format(text))
+    os.system(f'''osascript -e 'tell Application "System Events" to display dialog "{text}"' ''')
+
 
 def annotate_peaks(dict_of_dfs, folder, genome, db='UCSC', check=False):
     '''
@@ -81,26 +86,25 @@ def annotate_peaks(dict_of_dfs, folder, genome, db='UCSC', check=False):
     chipseeker = importr('ChIPseeker')
     genomicFeatures = importr('GenomicFeatures')
     makeGR = ro.r("makeGRangesFromDataFrame")
-    as_df = ro.r("as.data.frame")    
+    as_df = ro.r("as.data.frame")
 
-    check_df = {key:os.path.isfile('{}{}_annotated.txt'.format(folder,key.replace(' ','_'))) for key in dict_of_dfs.keys()}
+    check_df = {key: os.path.isfile(f'{folder}{key.replace(" ","_")}_annotated.txt') for key in dict_of_dfs.keys()}
     return_bool = False not in set(check_df.values())
     if return_bool & check:
-        return {'{}_annotated'.format(key):pd.from_csv('{}{}_annotated.txt'.format(folder,key.replace(' ','_')), index_col=0, header=0, sep="\t") for key in dict_of_dfs.keys()}
+        return {f'{key}_annotated': pd.from_csv(f'{folder}{key.replace(" ","_")}_annotated.txt', index_col=0, header=0, sep="\t") for key in dict_of_dfs.keys()}
 
+    species = ('Mmusculus' if genome.lower() == 'mm10' else 'Hsapiens')
     if db.lower() == 'ucsc':
-        species = ('Mmusculus' if genome.lower() == 'mm10' else 'Hsapiens')
-        TxDb = importr('TxDb.{}.UCSC.{}.knownGene'.format(species, genome.lower()))
-        txdb = ro.r('txdb <- TxDb.{}.UCSC.{}.knownGene'.format(species, genome.lower()))
+        TxDb = importr(f'TxDb.{species}.UCSC.{genome.lower()}.knownGene')
+        txdb = ro.r(f'txdb <- TxDb.{species}.UCSC.{genome.lower()}.knownGene')
     elif db.lower() == 'ensembl':
-        pwd = '/Volumes/ce-bioinformatics/COMMON/txdb/gencode_{}_txdb_2018_05_23.sqlite'
-        loadDb = ro.r('loadDb')
-        txdb = loadDb(pwd.format(genome.lower()))
+        TxDb = importr(f'TxDb.{species}.UCSC.{genome.lower()}.ensGene')
+        txdb = ro.r(f'txdb <- TxDb.{species}.UCSC.{genome.lower()}.ensGene')
     else:
         raise ValueError('UCSC or Ensembl only.')
 
     os.makedirs(folder, exist_ok=True)
-    
+
     if genome.lower() == 'mm10':
         annoDb = importr('org.Mm.eg.db')
         anno = 'org.Mm.eg.db'
@@ -108,23 +112,25 @@ def annotate_peaks(dict_of_dfs, folder, genome, db='UCSC', check=False):
         annoDb = importr('org.Hs.eg.db')
         anno = 'org.Hs.eg.db'
 
-    return_dict={}
-    
+    return_dict = {}
+
     print('Annotating Peaks...')
     for key, df in dict_of_dfs.items():
         if check & check_df[key]:
-            return_dict['{}_annotated'.format(key)] = pd.from_csv('{}{}_annotated.txt'.format(folder,key.replace(' ','_')), index_col=0, header=0, sep="\t")
+            return_dict[f'{key}_annotated'] = pd.from_csv(f'{folder}{key.replace(" ","_")}_annotated.txt', index_col=0, header=0, sep="\t")
         else:
-            col_len=len(df.columns)
-            df.columns = ["chr","start","end"] + list(range(col_len - 3))
+            col_len = len(df.columns)
+            df.columns = ["chr", "start", "end"] + list(range(col_len - 3))
             GR = makeGR(df)
             GR_anno = chipseeker.annotatePeak(GR, overlap='all', TxDb=txdb, annoDb=anno)
-            return_dict['{}_annotated'.format(key)] = ro.pandas2ri.ri2py(chipseeker.as_data_frame_csAnno(GR_anno))
-            return_dict['{}_annotated'.format(key)].to_csv('{}{}_annotated.txt'.format(folder,key.replace(' ','_')),index=True, header=True, sep="\t")
-    
+            return_dict[f'{key}_annotated'] = ro.pandas2ri.ri2py(chipseeker.as_data_frame_csAnno(GR_anno))
+            return_dict[f'{key}_annotated'].to_excel(f'{folder}{key.replace(" ","_")}_annotated.xlsx')
+
     return return_dict
 
-def plot_peak_genomic_annotation(dict_of_df,folder,genome):
+
+"""
+def plot_peak_genomic_annotation(dict_of_df, folder, genome):
     '''
     Plots genomic annotation graphs.
 
@@ -141,7 +147,7 @@ def plot_peak_genomic_annotation(dict_of_df,folder,genome):
     pandas2ri.activate()
     ri.set_writeconsole_regular(rout_write)
     ri.set_writeconsole_warnerror(rout_write)
-    
+
     species = ('Mmusculus' if genome.lower() == 'mm10' else 'Hsapiens')
 
     TxDb = importr('TxDb.{}.UCSC.{}.knownGene'.format(species, genome.lower()))
@@ -163,10 +169,10 @@ def plot_peak_genomic_annotation(dict_of_df,folder,genome):
     lapply= ro.r('lapply')
     upsetplot = ro.r('upsetplot')
     plot = ro.r('plot')
-    
+
     out = folder + 'all_peak_annotation'
     os.makedirs(out, exist_ok=True)
-    
+
     GR={}
     GR_anno={}
     for key, df in dict_of_df.items():
@@ -186,47 +192,51 @@ def plot_peak_genomic_annotation(dict_of_df,folder,genome):
         grdevices.png(file='{}/{}_annoData.png'.format(out,key).replace(' ','_'), width=1000, height=500)
         upsetplot(GR_anno[key], vennpie=True)
         grdevices.dev_off()
-    
+    """
+
+
 def plot_venn2(Series, string_name_of_overlap, folder):
     '''
     Series with with overlaps 10,01,11
     Plots a 2 way venn.
     Saves to file.
     '''
-    
-    folder = '{}venn2/'.format(folder) if folder.endswith('/') else '{}/venn2/'.format(folder)
+
+    folder = f'{folder}venn2/' if folder.endswith('/') else f'{folder}/venn2/'
     os.makedirs(folder, exist_ok=True)
-    
-    plt.figure(figsize=(7,7))
-    
+
+    plt.figure(figsize=(7, 7))
+
     font = {'family': 'sans-serif',
             'weight': 'normal',
             'size': 16,
-           }
-    
+            }
+
     plt.rc('font', **font)
-  
-    #make venn
-    venn_plot = venn2(subsets=(Series.iloc[0], Series.iloc[1], Series.iloc[2]), set_labels = [name.replace('_',' ') for name in Series.index.tolist()])
-    patch=['10','01','11']
-    colors=['green','blue','teal']
-    for patch,color in zip(patch,colors):
+
+    # make venn
+    sns.set(style='white', font='Arial')
+    venn_plot = venn2(subsets=(Series.iloc[0], Series.iloc[1], Series.iloc[2]), set_labels=[name.replace('_', ' ') for name in Series.index.tolist()])
+    patch = ['10', '01', '11']
+    colors = ['green', 'blue', 'teal']
+    for patch, color in zip(patch, colors):
         venn_plot.get_patch_by_id(patch).set_color('none')
         venn_plot.get_patch_by_id(patch).set_alpha(.4)
         venn_plot.get_patch_by_id(patch).set_edgecolor('none')
-    
-    c= venn2_circles(subsets=(Series.iloc[0], Series.iloc[1], Series.iloc[2]))
-    colors_test=['green','blue']
-    for circle,color in zip(c,colors_test):
+
+    c = venn2_circles(subsets=(Series.iloc[0], Series.iloc[1], Series.iloc[2]))
+    colors_test = ['green', 'blue']
+    for circle, color in zip(c, colors_test):
         circle.set_edgecolor(color)
         circle.set_alpha(0.8)
         circle.set_linewidth(3)
-     
-    plt.title(string_name_of_overlap.replace('_',' ') + " overlaps")
+
+    plt.title(string_name_of_overlap.replace('_', ' ') + " overlaps")
     plt.tight_layout()
-    plt.savefig('{}{}-overlap.svg'.format(folder, string_name_of_overlap.replace(' ','_')))
-    plt.savefig('{}{}-overlap.png'.format(folder, string_name_of_overlap.replace(' ','_')), dpi=300)
-    
+    plt.savefig(f"{folder}{string_name_of_overlap.replace(' ','_')}-overlap.svg")
+    plt.savefig(f"{folder}{string_name_of_overlap.replace(' ','_')}-overlap.png", dpi=300)
+
+
 def plot_venn2_set(dict_of_sets, string_name_of_overlap, folder):
     '''
     Plots a 2 way venn from a dictionary of sets
@@ -243,47 +253,49 @@ def plot_venn2_set(dict_of_sets, string_name_of_overlap, folder):
     None
 
     '''
-    folder = '{}venn2/'.format(folder) if folder.endswith('/') else '{}/venn2/'.format(folder)
+    folder = f'{folder}venn2/' if folder.endswith('/') else f'{folder}/venn2/'
     os.makedirs(folder, exist_ok=True)
-    
-    plt.figure(figsize=(7,7))
-    
+
+    plt.figure(figsize=(7, 7))
+
     font = {'family': 'sans-serif',
             'weight': 'normal',
             'size': 16,
-           }
-    
+            }
+
     plt.rc('font', **font)
-  
+
     set_list = []
     set_names = []
-    for name,setlist in dict_of_sets.items():
+    for name, setlist in dict_of_sets.items():
         set_list.append(setlist)
-        set_names.append(name.replace('_',' '))
-        
-    #make venn
-    venn_plot = venn2(subsets=set_list, set_labels = set_names)
-    patch=['10','01','11']
-    colors=['green','blue','teal']
-    for patch,color in zip(patch,colors):
+        set_names.append(name.replace('_', ' '))
+
+    # make venn
+    sns.set(style='white', font='Arial')
+    venn_plot = venn2(subsets=set_list, set_labels=set_names)
+    patch = ['10', '01', '11']
+    colors = ['green', 'blue', 'teal']
+    for patch, color in zip(patch, colors):
         venn_plot.get_patch_by_id(patch).set_color('none')
         venn_plot.get_patch_by_id(patch).set_alpha(.4)
         venn_plot.get_patch_by_id(patch).set_edgecolor('none')
-    
-    c= venn2_circles(subsets=set_list)
-    colors_test=['green','blue']
-    for circle,color in zip(c,colors_test):
+
+    c = venn2_circles(subsets=set_list)
+    colors_test = ['green', 'blue']
+    for circle, color in zip(c, colors_test):
         circle.set_edgecolor(color)
         circle.set_alpha(0.8)
         circle.set_linewidth(3)
-     
+
     plt.title(string_name_of_overlap.replace('_', ' ') + " overlaps")
     plt.tight_layout()
-    plt.savefig('{}{}-overlap.svg'.format(folder, string_name_of_overlap.replace(' ','_')))
-    plt.savefig('{}{}-overlap.png'.format(folder, string_name_of_overlap.replace(' ','_')), dpi=300)
+    plt.savefig(f"{folder}{string_name_of_overlap.replace(' ', '_')}-overlap.svg")
+    plt.savefig(f"{folder}{string_name_of_overlap.replace(' ', '_')}-overlap.png", dpi=300)
+
 
 def plot_venn3_set(dict_of_sets, string_name_of_overlap, folder):
-    '''  
+    '''
     Makes 3 way venn from 3 sets.
     Saves to file.
 
@@ -298,48 +310,49 @@ def plot_venn3_set(dict_of_sets, string_name_of_overlap, folder):
     None
 
     '''
-    folder = '{}venn3/'.format(folder) if folder.endswith('/') else '{}/venn3/'.format(folder)
+    folder = f'{folder}venn3/' if folder.endswith('/') else f'{folder}/venn3/'
     os.makedirs(folder, exist_ok=True)
 
-    plt.figure(figsize=(7,7))
-    
+    sns.set(style='white', rc={'figure.figsize': (7, 7)})
+
     font = {'family': 'sans-serif',
             'weight': 'normal',
             'size': 16,
-           }
-    
+            }
+
     plt.rc('font', **font)
-    
+
     set_list = []
     set_names = []
-    for name,setlist in dict_of_sets.items():
+    for name, setlist in dict_of_sets.items():
         set_list.append(setlist)
-        set_names.append(name.replace('_',' '))
-    
-    #make venn
-    venn_plot = venn3(subsets=set_list, set_labels = set_names)
-    patch=['100','110','101','010','011','001','111']
+        set_names.append(name.replace('_', ' '))
+
+    # make venn
+    venn_plot = venn3(subsets=set_list, set_labels=set_names)
+    patch = ['100', '110', '101', '010', '011', '001', '111']
     for p in patch:
         if venn_plot.get_patch_by_id(p):
             venn_plot.get_patch_by_id(p).set_color('none')
             venn_plot.get_patch_by_id(p).set_alpha(.4)
             venn_plot.get_patch_by_id(p).set_edgecolor('none')
-    
-    #make
-    c= venn3_circles(subsets=set_list)
-    colors_list=['green','blue','grey']
-    for circle,color in zip(c,colors_list):
+
+    # make
+    c = venn3_circles(subsets=set_list)
+    colors_list = ['green', 'blue', 'grey']
+    for circle, color in zip(c, colors_list):
         circle.set_edgecolor(color)
         circle.set_alpha(0.8)
         circle.set_linewidth(4)
-     
-    plt.title("{} Overlaps".format(string_name_of_overlap.replace('_', ' ')))
+
+    plt.title(f"{string_name_of_overlap.replace('_', ' ')} Overlaps")
     plt.tight_layout()
-    plt.savefig('{}{}-overlap.svg'.format(folder, string_name_of_overlap.replace(' ','_')))
-    plt.savefig('{}{}-overlap.png'.format(folder, string_name_of_overlap.replace(' ','_')), dpi=300)
-    
+    plt.savefig(f"{folder}{string_name_of_overlap.replace(' ','_')}-overlap.svg")
+    plt.savefig(f"{folder}{string_name_of_overlap.replace(' ','_')}-overlap.png", dpi=300)
+
+
 def plot_venn3_counts(element_list, set_labels, string_name_of_overlap, folder):
-    '''    
+    '''
     Plot three way venn based on counts of specific overlaping numbers.
     Saves to file.
 
@@ -355,41 +368,41 @@ def plot_venn3_counts(element_list, set_labels, string_name_of_overlap, folder):
     None
 
     '''
-    folder = '{}venn3/'.format(folder) if folder.endswith('/') else '{}/venn3/'.format(folder)
+    folder = f'{folder}venn3/' if folder.endswith('/') else f'{folder}/venn3/'
     os.makedirs(folder, exist_ok=True)
-    
-    
-    plt.figure(figsize=(7,7))
-    
+
+    sns.set(style='white', rc={'figure.figsize': (7, 7)})
+
     font = {'family': 'sans-serif',
             'weight': 'normal',
             'size': 16,
-           }
-    
+            }
+
     plt.rc('font', **font)
-    
-    #make venn
-    venn_plot = venn3(subsets=element_list, set_labels = [name.replace('_',' ') for name in set_labels])
-    patch=['100','110','101','010','011','001','111']
+
+    # make venn
+    venn_plot = venn3(subsets=element_list, set_labels=[name.replace('_', ' ') for name in set_labels])
+    patch = ['100', '110', '101', '010', '011', '001', '111']
     for p in patch:
         if venn_plot.get_patch_by_id(p):
             venn_plot.get_patch_by_id(p).set_color('none')
             venn_plot.get_patch_by_id(p).set_alpha(.4)
             venn_plot.get_patch_by_id(p).set_edgecolor('none')
-    
-    #make
-    c= venn3_circles(subsets=element_list)
-    colors_list=['green','blue','grey']
-    for circle,color in zip(c,colors_list):
+
+    # make
+    c = venn3_circles(subsets=element_list)
+    colors_list = ['green', 'blue', 'grey']
+    for circle, color in zip(c, colors_list):
         circle.set_edgecolor(color)
         circle.set_alpha(0.8)
         circle.set_linewidth(4)
-     
-    plt.title("{} Overlaps".format(string_name_of_overlap.replace('_', ' ')))
+
+    plt.title(f"{string_name_of_overlap.replace('_', ' ')} Overlaps")
     plt.tight_layout()
-    plt.savefig('{}{}-overlap.svg'.format(folder, string_name_of_overlap.replace(' ','_')))
-    plt.savefig('{}{}-overlap.png'.format(folder, string_name_of_overlap.replace(' ','_')), dpi=300)
-    
+    plt.savefig(f"{folder}{string_name_of_overlap.replace(' ', '_')}-overlap.svg")
+    plt.savefig(f"{folder}{string_name_of_overlap.replace(' ', '_')}-overlap.png", dpi=300)
+
+
 def overlap_two(bed_dict, genome=None):
     '''
     Takes a dictionary of two bed-like format files.
@@ -403,7 +416,7 @@ def overlap_two(bed_dict, genome=None):
     ------
     bed_dict:  dictionary of BedTool files
     genome: 'hg38','hg19','mm10'
-    
+
     Returns
     -------
     Returns a dictionary of dataframes from unique and overlap peaks.
@@ -412,76 +425,77 @@ def overlap_two(bed_dict, genome=None):
 
     names = list(bed_dict.keys())
 
-    Folder = '{}/'.format(os.getcwd())
-    subfolder = '{}_{}_overlap/'.format(names[0].replace(' ','_'), names[1].replace(' ','_'))
-    
-    out = '{}{}'.format(Folder, subfolder)
+    Folder = f'{os.getcwd()}/'
+    subfolder = f"{names[0].replace(' ', '_')}_{names[1].replace(' ', '_')}_overlap/"
+
+    out = f'{Folder}{subfolder}'
     os.makedirs(out, exist_ok=True)
-    print('Output files are found in {}'.format(out))
-    
+    print(f'Output files are found in {out}')
+
     masterfile = bed_dict[names[0]].cat(bed_dict[names[1]]).sort().merge()
-    sorted_dict = {key:bed.sort().merge() for key, bed in bed_dict.items()}
-    overlap_dict = {'overlap':masterfile.intersect(sorted_dict[names[0]]).intersect(sorted_dict[names[1]])}
-    for key,bed in sorted_dict.items():
-        other = {other_key:other_bed for other_key,other_bed in sorted_dict.items() if other_key != key}
+    sorted_dict = {key: bed.sort().merge() for key, bed in bed_dict.items()}
+    overlap_dict = {'overlap': masterfile.intersect(sorted_dict[names[0]]).intersect(sorted_dict[names[1]])}
+    for key, bed in sorted_dict.items():
+        other = {other_key: other_bed for other_key, other_bed in sorted_dict.items() if other_key != key}
         overlap_dict['{}_unique_peak'.format(key)] = masterfile.intersect(sorted_dict[key]).intersect(list(other.values())[0], v=True)
 
-    for key,bed in overlap_dict.items():
-        bed.to_dataframe().to_csv('{}{}{}-unique-peaks-from-mergedPeaks.bed'.format(Folder, subfolder, key.replace(' ','_')),
+    for key, bed in overlap_dict.items():
+        bed.to_dataframe().to_csv('{}{}{}-unique-peaks-from-mergedPeaks.bed'.format(Folder, subfolder, key.replace(' ', '_')),
                                   header=None, index=None, sep="\t")
-    
+
     overlap_numbers = pd.Series({names[0]: len(overlap_dict['{}_unique_peak'.format(names[0])]),
                                  names[1]: len(overlap_dict['{}_unique_peak'.format(names[1])]),
                                  'overlap': len(overlap_dict['overlap'])
                                  },
-                                index=[names[0], names[1],'overlap']         
+                                index=[names[0], names[1], 'overlap']
                                 )
 
-    #Venn
-    plot_venn2(overlap_numbers, 
+    # Venn
+    plot_venn2(overlap_numbers,
                '{} and\n{} peak'.format(names[0], names[1]),
-               '{}{}'.format(Folder,subfolder)
-              )
+               '{}{}'.format(Folder, subfolder)
+               )
     if bool(genome):
         print('Annotating overlaping peaks...')
-        #Annotate with ChIPseeker
-        unikey='{}_unique'
-        unianno='{}_unique_annotated'
-        return_dict = annotate_peaks({unikey.format(key):bed.to_dataframe() for key,bed in overlap_dict.items()}, '{}{}'.format(Folder,subfolder), genome=genome)
+        # Annotate with ChIPseeker
+        unikey = '{}_unique'
+        unianno = '{}_unique_annotated'
+        return_dict = annotate_peaks({unikey.format(key): bed.to_dataframe() for key, bed in overlap_dict.items()}, '{}{}'.format(Folder, subfolder), genome=genome)
 
         Set1_unique = set(return_dict[unianno.format('{}_unique_peak'.format(names[0]))].SYMBOL.unique().tolist())
-        Set2_unique = set(return_dict[unianno.format('{}_unique_peak'.format(names[1]))].SYMBOL.unique().tolist()) 
+        Set2_unique = set(return_dict[unianno.format('{}_unique_peak'.format(names[1]))].SYMBOL.unique().tolist())
         Overlap_Set = set(return_dict[unianno.format('overlap')].SYMBOL.unique().tolist())
 
         venn2_dict = {names[0]: (Set1_unique | Overlap_Set),
                       names[1]: (Set2_unique | Overlap_Set)
-                     }
+                      }
 
         plot_venn2_set(venn2_dict,
-                      '{} and {}\nannotated gene'.format(names[0], names[1]),
-                      '{}{}'.format(Folder,subfolder)
-                      )
-        
+                       '{} and {}\nannotated gene'.format(names[0], names[1]),
+                       '{}{}'.format(Folder, subfolder)
+                       )
+
         gene_overlaps = {}
         gene_overlaps['{}_unique_genes'.format(names[0])] = Set1_unique - (Set2_unique | Overlap_Set)
         gene_overlaps['{}_unique_genes'.format(names[1])] = Set2_unique - (Set1_unique | Overlap_Set)
         gene_overlaps['Overlap_Gene_Set'] = (Set1_unique & Set2_unique) | Overlap_Set
-        
-        #for key, gene_set in gene_overlaps.items():
+
+        # for key, gene_set in gene_overlaps.items():
         #    out_file = '{}{}{}.txt'.format(Folder,subfolder,key)
         #    for gene in gene_set:
         #        print(gene, file=open(out_file, 'a'))
-        
-        for key,item in gene_overlaps.items():
-            return_dict[key]=item
-            
-        for key,df in overlap_dict.items():
-            return_dict[key]=df
-        
-    else: 
+
+        for key, item in gene_overlaps.items():
+            return_dict[key] = item
+
+        for key, df in overlap_dict.items():
+            return_dict[key] = df
+
+    else:
         return_dict = overlap_dict
-    
+
     return return_dict
+
 
 def enrichr(gene_list, description, out_dir):
     '''
@@ -499,27 +513,29 @@ def enrichr(gene_list, description, out_dir):
 
     None
 
-    '''    
+    '''
+
     os.makedirs(out_dir, exist_ok=True)
-    
+
     gseapy.enrichr(gene_list=gene_list,
-                   description='{}_KEGG'.format(description),
-                   gene_sets='KEGG_2016', 
+                   description=f'{description}_KEGG',
+                   gene_sets='KEGG_2016',
                    outdir=out_dir,
                    format='png'
                    )
     gseapy.enrichr(gene_list=gene_list,
-                   description='{}_GO_biological_process'.format(description),
-                   gene_sets='GO_Biological_Process_2017b', 
+                   description=f'{description}_GO_biological_process',
+                   gene_sets='GO_Biological_Process_2017b',
                    outdir=out_dir,
                    format='png'
-                  )
-    gseapy.enrichr(gene_list=gene_list, 
-                   description='{}_GO_molecular_function'.format(description),
-                   gene_sets='GO_Molecular_Function_2017b', 
+                   )
+    gseapy.enrichr(gene_list=gene_list,
+                   description=f'{description}_GO_molecular_function',
+                   gene_sets='GO_Molecular_Function_2017b',
                    outdir=out_dir,
                    format='png'
-                  )
+                   )
+
 
 def overlap_three(bed_dict, genome=None):
     '''
@@ -534,7 +550,7 @@ def overlap_three(bed_dict, genome=None):
     ------
     bed_dict:  dictionary of BedTool files
     genome: 'hg38','hg19','mm10'
-    
+
     Returns
     -------
     Returns a dictionary of dataframes from unique and overlap peaks.
@@ -544,56 +560,56 @@ def overlap_three(bed_dict, genome=None):
 
     names = list(bed_dict.keys())
 
-    Folder = '{}/'.format(os.getcwd())
-    subfolder = '{}-{}-{}-overlap/'.format(names[0].replace(' ','_'), names[1].replace(' ','_'), names[2].replace(' ','_'))
-    
-    out = '{}{}'.format(Folder, subfolder)
+    Folder = f'{os.getcwd()}/'
+    subfolder = f"{names[0].replace(' ', '_')}-{ names[1].replace(' ', '_')}-{names[2].replace(' ', '_')}-overlap/"
+
+    out = f'{Folder}{subfolder}'
     os.makedirs(out, exist_ok=True)
-    print('Output files are found in {}'.format(out))
-    print('A: {}, B: {}, C: {}'.format(names[0], names[1], names[2]))
-    
+    print(f'Output files are found in {out}')
+    print(f'A: {names[0]}, B: {names[1]}, C: {names[2]}')
+
     master = bed_dict[names[0]].cat(bed_dict[names[1]]).cat(bed_dict[names[2]]).sort().merge()
-    
+
     A = bed_dict[names[0]].sort().merge()
     B = bed_dict[names[1]].sort().merge()
     C = bed_dict[names[2]].sort().merge()
 
-    sorted_dict=OrderedDict({'master':master,'A':A,'B':B,'C':C})
-    sorted_dict['Abc']=master.intersect(A).intersect(B, v=True).intersect(C,v=True)
-    sorted_dict['aBc']=master.intersect(B).intersect(A, v=True).intersect(C,v=True)
-    sorted_dict['ABc']=master.intersect(A).intersect(B).intersect(C,v=True)
-    sorted_dict['abC']=master.intersect(C).intersect(A, v=True).intersect(B,v=True)
-    sorted_dict['AbC']=master.intersect(A).intersect(C).intersect(B, v=True)
-    sorted_dict['aBC']=master.intersect(B).intersect(C).intersect(A,v=True)
-    sorted_dict['ABC']=master.intersect(A).intersect(B).intersect(C)
+    sorted_dict = OrderedDict({'master': master, 'A': A, 'B': B, 'C': C})
+    sorted_dict['Abc'] = (master + A - B - C)
+    sorted_dict['aBc'] = (master + B - A - C)
+    sorted_dict['ABc'] = (master + A + B - C)
+    sorted_dict['abC'] = (master + C - A - B)
+    sorted_dict['AbC'] = (master + A + C - B)
+    sorted_dict['aBC'] = (master + B + C - A)
+    sorted_dict['ABC'] = (master + A + B + C)
 
-    labTup =tuple(key for key in sorted_dict.keys())
-    lenTup =tuple(len(bed) for bed in sorted_dict.values())
-    
-    print('{}\n{}'.format(labTup, lenTup))
+    labTup = tuple(key for key in sorted_dict.keys())
+    lenTup = tuple(len(bed) for bed in sorted_dict.values())
+
+    print(f'{labTup}\n{lenTup}')
 
     plot_venn3_counts(lenTup[4:], names, '', out)
 
-    for key,bed in sorted_dict.items():
-        bed.to_dataframe().to_csv('{}{}-peaks-from-mergedPeaks.bed'.format(out, key.replace(' ','_')),
-                                  header=None, index=None, sep="\t")
+    for key, bed in sorted_dict.items():
+        if len(bed) > 1:
+            bed.to_dataframe().to_csv(f'{out}{key.replace(" ", "_")}-peaks-from-mergedPeaks.bed', header=None, index=None, sep="\t")
 
     if bool(genome):
         print('Annotating ovelapped peaks...')
-        unikey='{}_unique'
-        unianno='{}_unique_annotated'
-        return_dict = annotate_peaks({unikey.format(key):bed.to_dataframe() for key,bed in sorted_dict.items()}, out, genome=genome)
+        unikey = '{}_unique'
+        unianno = '{}_unique_annotated'
+        return_dict = annotate_peaks({unikey.format(key): bed.to_dataframe() for key, bed in sorted_dict.items()}, out, genome=genome)
 
-        Set1=set(return_dict[unianno.format('A')].SYMBOL.unique().tolist())
-        Set2=set(return_dict[unianno.format('B')].SYMBOL.unique().tolist())
-        Set3=set(return_dict[unianno.format('C')].SYMBOL.unique().tolist())
+        Set1 = set(return_dict[unianno.format('A')].SYMBOL.unique().tolist())
+        Set2 = set(return_dict[unianno.format('B')].SYMBOL.unique().tolist())
+        Set3 = set(return_dict[unianno.format('C')].SYMBOL.unique().tolist())
 
-        plot_venn3_set({names[0]:Set1, names[1]:Set2, names[2]:Set3}, '{}_{}_{}'.format(names[0],names[1],names[2]), out)
+        plot_venn3_set({names[0]: Set1, names[1]: Set2, names[2]: Set3}, f'{names[0]}_{names[1]}_{names[2]}', out)
 
-    return sorted_dict if genome == None else {**sorted_dict, **return_dict}
+    return sorted_dict if genome is None else {**sorted_dict, **return_dict}
+
 
 def splice_bar(data, title, x, y):
-    
     '''
     Plots bar graph of misplicing counts as file.
 
@@ -610,12 +626,13 @@ def splice_bar(data, title, x, y):
     '''
     sns.set(context='paper', font='Arial', style='white', font_scale=2)
 
-    plot = sns.barplot(x = x, y=y, data = data)
+    plot = sns.barplot(x=x, y=y, data=data)
     plot.set_title(title.replace('_', ' '))
     plot.set_ylabel('')
 
     sns.despine()
-    sns.utils.plt.savefig('{}.png'.format(title.replace(' ','_')), dpi=300)
+    sns.utils.plt.savefig('{}.png'.format(title.replace(' ', '_')), dpi=300)
+
 
 def make_df(dict_of_sets, name):
     '''
@@ -633,21 +650,22 @@ def make_df(dict_of_sets, name):
 
     '''
 
-    out_dir='{pwd}/{name}/'.format(pwd=os.getcwd(), name=name.replace(' ','_'))
+    out_dir = '{pwd}/{name}/'.format(pwd=os.getcwd(), name=name.replace(' ', '_'))
     os.makedirs(out_dir, exist_ok=True)
-    
-    count = 0
-    for key,genes in dict_of_sets.items():
-        count = max(count,len(genes))
-    
-    df = pd.DataFrame(index = range(1,count+1))
 
-    for key,genes in dict_of_sets.items():
-        df[key] = pd.Series(list(genes) + ['NA']*(count-len(genes)))
-    
-    df.to_excel('{}/{}.xls'.format(out_dir,name.replace(' ','_')), index=False)
+    count = 0
+    for key, genes in dict_of_sets.items():
+        count = max(count, len(genes))
+
+    df = pd.DataFrame(index=range(1, count + 1))
+
+    for key, genes in dict_of_sets.items():
+        df[key] = pd.Series(list(genes) + ['NA'] * (count - len(genes)))
+
+    df.to_excel('{}/{}.xls'.format(out_dir, name.replace(' ', '_')), index=False)
 
     return df
+
 
 def enrichr_topterm(gene_list, description, out_dir, top_term, figsize):
     '''
@@ -669,36 +687,37 @@ def enrichr_topterm(gene_list, description, out_dir, top_term, figsize):
     None
 
     '''
-    
+
     os.makedirs(out_dir, exist_ok=True)
-    
-    gseapy.enrichr(figsize= figsize,
+
+    gseapy.enrichr(figsize=figsize,
                    top_term=top_term,
                    gene_list=gene_list,
                    description='{}_KEGG'.format(description),
-                   gene_sets='KEGG_2016', 
+                   gene_sets='KEGG_2016',
                    outdir=out_dir
                    )
 
-    gseapy.enrichr(figsize= figsize,
+    gseapy.enrichr(figsize=figsize,
                    top_term=top_term,
                    gene_list=gene_list,
                    description='{}_GO_biological_process'.format(description),
-                   gene_sets='GO_Biological_Process_2017b', 
+                   gene_sets='GO_Biological_Process_2017b',
                    outdir=out_dir
-                  )
-    gseapy.enrichr(figsize= figsize,
+                   )
+    gseapy.enrichr(figsize=figsize,
                    top_term=top_term,
-                   gene_list=gene_list, 
+                   gene_list=gene_list,
                    description='{}_GO_molecular_function'.format(description),
-                   gene_sets='GO_Molecular_Function_2017b', 
+                   gene_sets='GO_Molecular_Function_2017b',
                    outdir=out_dir
-                  )
+                   )
 
-def plot_col(df, title, ylabel, out='', xy=(None,None), xticks=[''], plot_type=['violin'], pvalue=False, compare_tags=None):
+
+def plot_col(df, title, ylabel, out='', xy=(None, None), xticks=[''], plot_type=['violin'], pvalue=False, compare_tags=None):
     '''
     Two column boxplot from dataframe.  Titles x axis based on column names.
-    
+
     Inputs
     ------
     df: dataframe (uses first two columns)
@@ -706,7 +725,7 @@ def plot_col(df, title, ylabel, out='', xy=(None,None), xticks=[''], plot_type=[
     ylabel: string of y label
     xy: If specified, will x is the label column and y is the data column. (default: (None,None): Data separated into two columns).
     xticks: list of xtick names (default is column name)
-    pvalue: bool to perform ttest (default is False).  Will only work if xy=(None,None) or ther are only two labels in x. 
+    pvalue: bool to perform ttest (default is False).  Will only work if xy=(None,None) or ther are only two labels in x.
     plot_type: list of one or more: violin, box, swarm (default=violin)
     compare_tags:  if xy and pvalue is specified and there are more than two tags in x, specify the tags to compare. eg. ['a','b']
     out: out parent directory.  if none returns into colplot/
@@ -714,8 +733,7 @@ def plot_col(df, title, ylabel, out='', xy=(None,None), xticks=[''], plot_type=[
     Returns
     ------
     None
-    
-    
+
     '''
     if len(out) != 0:
         out = out if out.endswith('/') else '{}/'.format(out)
@@ -723,35 +741,35 @@ def plot_col(df, title, ylabel, out='', xy=(None,None), xticks=[''], plot_type=[
     os.makedirs(out, exist_ok=True)
 
     plt.clf()
-    sns.set(context='paper', font='Arial', font_scale=2, style='white', rc={'figure.dpi': 300, 'figure.figsize':(5,6)})
-    
+    sns.set(context='paper', font='Arial', font_scale=2, style='white', rc={'figure.dpi': 300, 'figure.figsize': (5, 6)})
+
     if type(plot_type) != list:
         plot_type = plot_type.split()
     lower_plot_type = [x.lower() for x in plot_type]
 
     if len(lower_plot_type) == 0:
-    	raise IOError('Input a plot type.')
+        raise IOError('Input a plot type.')
     elif True not in {x in lower_plot_type for x in ['violin', 'box', 'swarm']}:
         raise IOError('Did not recognize plot type.')
 
     if 'swarm' in lower_plot_type:
-        if xy == (None,None):
+        if xy == (None, None):
             fig = sns.swarmplot(data=df, color='black', s=4)
         else:
             fig = sns.swarmplot(data=df, x=xy[0], y=xy[1], color='black', s=4)
     if 'violin' in lower_plot_type:
-        if xy == (None,None):
+        if xy == (None, None):
             fig = sns.violinplot(data=df)
         else:
             fig = sns.violinplot(data=df, x=xy[0], y=xy[1])
     if 'box' in lower_plot_type:
-        if xy == (None,None):
+        if xy == (None, None):
             fig = sns.boxplot(data=df)
         else:
             fig = sns.boxplot(data=df, x=xy[0], y=xy[1])
 
     fig.yaxis.set_label_text(ylabel)
-    fig.set_title(title.replace('_',' '))
+    fig.set_title(title.replace('_', ' '))
     if xticks:
         fig.xaxis.set_ticklabels(xticks)
         fig.xaxis.set_label_text('')
@@ -759,23 +777,24 @@ def plot_col(df, title, ylabel, out='', xy=(None,None), xticks=[''], plot_type=[
             tick.set_fontsize(12)
 
     if pvalue:
-        if xy==(None,None):
-            _,pvalue = stats.ttest_ind(a=df.iloc[:,0], b=df.iloc[:,1])
+        if xy == (None, None):
+            _, pvalue = stats.ttest_ind(a=df.iloc[:, 0], b=df.iloc[:, 1])
             compare_tags = df.columns
         else:
-            _,pvalue = stats.ttest_ind(a=df[df[xy[0]] == compare_tags[0]][xy[1]], b=df[df[xy[0]] == compare_tags[1]][xy[1]])
-        fig.text(s='p-value = {:.03g}, {} v {}'.format(pvalue,compare_tags[0],compare_tags[1]), x=0, y=-.12, transform=fig.axes.transAxes, fontsize=12)
-        
+            _, pvalue = stats.ttest_ind(a=df[df[xy[0]] == compare_tags[0]][xy[1]], b=df[df[xy[0]] == compare_tags[1]][xy[1]])
+        fig.text(s='p-value = {:.03g}, {} v {}'.format(pvalue, compare_tags[0], compare_tags[1]), x=0, y=-.12, transform=fig.axes.transAxes, fontsize=12)
+
     sns.despine()
     plt.tight_layout()
-    plt.savefig('{}{}.svg'.format(out,title.replace(' ','_')))
+    plt.savefig('{}{}.svg'.format(out, title.replace(' ', '_')))
     plt.subplots_adjust(bottom=0.17, top=0.9)
-    plt.savefig('{}{}.png'.format(out,title.replace(' ','_')), dpi=300)
+    plt.savefig('{}{}.png'.format(out, title.replace(' ', '_')), dpi=300)
 
-    print('{}.png found in {}/'.format(title.replace(' ','_'), out))
+    print('{}.png found in {}/'.format(title.replace(' ', '_'), out))
 
-def scatter_regression(df, s=150, alpha=0.3, line_color='dimgrey', svg=False, reg_stats=True, point_color='steelblue', title=None, 
-                       xlabel=None,ylabel=None,IndexA=None,IndexB=None, annotate=None, Alabel='Group A', Blabel='Group B'):
+
+def scatter_regression(df, s=150, alpha=0.3, line_color='dimgrey', svg=False, reg_stats=True, point_color='steelblue', title=None,
+                       xlabel=None, ylabel=None, IndexA=None, IndexB=None, annotate=None, Alabel='Group A', Blabel='Group B'):
     '''
     Scatter plot and Regression based on two matched vectors.
     Plots r-square and pvalue on .png
@@ -783,7 +802,7 @@ def scatter_regression(df, s=150, alpha=0.3, line_color='dimgrey', svg=False, re
     Inputs
     ------
     df: dataframe to plot (column1 = x axis, column2= y axis)
-    
+
     kwargs (defaults):
     s: point size (150)
     alpha: (0.3)
@@ -806,59 +825,59 @@ def scatter_regression(df, s=150, alpha=0.3, line_color='dimgrey', svg=False, re
     Saves .png plot in scatter_regression/ folder in cwd with dpi=300.
 
     '''
-    sns.set(context='paper',style="white", font_scale=3, font='Arial', 
-            rc={"lines.linewidth": 2, 
-                'figure.figsize': (9,9),  
-                'font.size': 18, 'figure.dpi':300})
-    fig,ax = plt.subplots()
+    sns.set(context='paper', style="white", font_scale=3, font='Arial',
+            rc={"lines.linewidth": 2,
+                'figure.figsize': (9, 9),
+                'font.size': 18, 'figure.dpi': 300})
+    fig, ax = plt.subplots()
 
     cols = df.columns.tolist()
-    regplot = sns.regplot(x=cols[0], y=cols[1],data=df,scatter=True,
-                          fit_reg = True, color=line_color,
-                          scatter_kws= {'s': s, 'color': point_color, 'alpha':alpha}
-                         )
-    
+    regplot = sns.regplot(x=cols[0], y=cols[1], data=df, scatter=True,
+                          fit_reg=True, color=line_color,
+                          scatter_kws={'s': s, 'color': point_color, 'alpha': alpha}
+                          )
+
     if xlabel:
-        plt.xlabel(xlabel, labelpad = 10)
+        plt.xlabel(xlabel, labelpad=10)
     if ylabel:
-        plt.ylabel(ylabel, labelpad = 10)
+        plt.ylabel(ylabel, labelpad=10)
     if title:
         regplot.set_title(title.replace('_', ' '))
-    if type(IndexA) in [list,set]:
-        A = set(IndexA)
+    if type(IndexA) in [list, set]:
+        # A = set(IndexA)
         Abool = [True if x in IndexA else False for x in df.index.tolist()]
-        regplot = ax.scatter(df[Abool].iloc[:,0], df[Abool].iloc[:,1], marker = 'o', alpha = (alpha + .4 if alpha < .6 else 1), color='red', s=s, label= Alabel)
-    if type(IndexB) in [list,set]:
-        B = set(IndexB)
+        regplot = ax.scatter(df[Abool].iloc[:, 0], df[Abool].iloc[:, 1], marker='o', alpha=(alpha + .4 if alpha < .6 else 1), color='red', s=s, label=Alabel)
+    if type(IndexB) in [list, set]:
+        # B = set(IndexB)
         Bbool = [True if x in IndexB else False for x in df.index.tolist()]
-        regplot = ax.scatter(df[Bbool].iloc[:,0], df[Bbool].iloc[:,1], marker = 'o', alpha = (alpha + .3 if alpha < .7 else 1), color='mediumblue', s=s, label= Blabel)
-    if type(annotate) in [list,set]:
+        regplot = ax.scatter(df[Bbool].iloc[:, 0], df[Bbool].iloc[:, 1], marker='o', alpha=(alpha + .3 if alpha < .7 else 1), color='mediumblue', s=s, label=Blabel)
+    if type(annotate) in [list, set]:
         anno_df = df[[True if x in annotate else False for x in df.index.tolist()]]
-        offx,offy = (df.iloc[:,:2].max()-df.iloc[:,:2].min())*.1
-        for index, (x,y) in anno_df.iterrows():
-            ax.annotate(index, xy=(x,y), xytext=((x-offx,y+offy) if y>=x else (x+offx, y-offy)), arrowprops={'arrowstyle':'-', 'color': 'black'})
+        offx, offy = (df.iloc[:, :2].max() - df.iloc[:, :2].min()) * .1
+        for index, (x, y) in anno_df.iterrows():
+            ax.annotate(index, xy=(x, y), xytext=((x - offx, y + offy) if y >= x else (x + offx, y - offy)), arrowprops={'arrowstyle': '-', 'color': 'black'})
     if reg_stats:
-        r,pvalue = stats.pearsonr(x=df.iloc[:,0], y=df.iloc[:,1])
-        ax.text(0,0 , 'r = {:.03g}; p-value = {:.03g}'.format(r,pvalue), fontsize = 25, transform=ax.transAxes)
-    
-    sns.despine(offset= 5)
+        r, pvalue = stats.pearsonr(x=df.iloc[:, 0], y=df.iloc[:, 1])
+        ax.text(0, 0, 'r = {:.03g}; p-value = {:.03g}'.format(r, pvalue), fontsize=25, transform=ax.transAxes)
+
+    sns.despine(offset=5)
     fig.tight_layout()
 
     os.makedirs('scatter_regression/', exist_ok=True)
-    
-    if svg:
-        plt.savefig('scatter_regression/{}.svg'.format(title.replace(' ','_')))
-    plt.savefig('scatter_regression/{}.png'.format(title.replace(' ','_')), dpi=300)
 
-    print('{}.png found in {}/scatter_regression/'.format(title.replace(' ','_'), os.getcwd()))
+    if svg:
+        plt.savefig('scatter_regression/{}.svg'.format(title.replace(' ', '_')))
+    plt.savefig('scatter_regression/{}.png'.format(title.replace(' ', '_')), dpi=300)
+
+    print('{}.png found in {}/scatter_regression/'.format(title.replace(' ', '_'), os.getcwd()))
 
 
 def signature_heatmap(vst, sig, name, cluster_columns=False):
     '''
-    Generate heatmap of differentially expressed genes using 
+    Generate heatmap of differentially expressed genes using
     variance stablized transfrmed log2counts.
-    
-    Inputs 
+
+    Inputs
     ------
     vst = gene name is the index
     sig = set or list of signature
@@ -875,18 +894,20 @@ def signature_heatmap(vst, sig, name, cluster_columns=False):
 
 
     '''
-    sns.set(font='Arial',font_scale=2, style='white', context='paper')
-    vst['gene_name']=vst.index
-    
-    CM = sns.clustermap(vst[vst.gene_name.apply(lambda x: x in sig)].drop('gene_name',axis=1),
-                        z_score=0, method='complete', cmap='RdBu_r', 
+    sns.set(font='Arial', font_scale=2, style='white', context='paper')
+    vst['gene_name'] = vst.index
+
+    CM = sns.clustermap(vst[vst.gene_name.apply(lambda x: x in sig)].drop('gene_name', axis=1),
+                        z_score=0, method='complete', cmap='RdBu_r',
                         yticklabels=False, col_cluster=cluster_columns)
-    CM.fig.suptitle(name.replace('_',' '))
-    CM.savefig('{}_Heatmap.png'.format(name.replace(' ','_')), dpi=300)
-    CM.savefig('{}_Heatmap.svg'.format(name.replace(' ','_')))
+    CM.fig.suptitle(name.replace('_', ' '))
+    CM.savefig('{}_Heatmap.png'.format(name.replace(' ', '_')), dpi=300)
+    CM.savefig('{}_Heatmap.svg'.format(name.replace(' ', '_')))
+
 
 def image_display(file):
     display(Image(file))
+
 
 def ssh_job(command_list, job_name, job_folder, project='nimerlab', threads=1, q='general', mem=3000):
     '''
@@ -909,53 +930,43 @@ def ssh_job(command_list, job_name, job_folder, project='nimerlab', threads=1, q
     Tuple(rand_id, job_folder, prejob_files)
 
     '''
-    
-    jobfolder = job_folder if job_folder.endswith('/') else '{}/'.format(job_folder)
 
-    os.system('ssh pegasus mkdir -p {}'.format(job_folder))
+    job_folder = job_folder if job_folder.endswith('/') else f'{job_folder}/'
+
+    os.system(f'ssh pegasus mkdir -p {job_folder}')
 
     rand_id = str(random.randint(0, 100000))
-    str_comd_list =  '\n'.join(command_list)
-    cmd = '''#!/bin/bash
+    str_comd_list = '\n'.join(command_list)
+    cmd = f'''#!/bin/bash
 
-#BSUB -J JOB_{job_name}_ID_{random_number}
+#BSUB -J ID_{rand_id}_JOB_{job_name.replace(' ','_')}
 #BSUB -R "rusage[mem={mem}]"
 #BSUB -R "span[ptile={threads}]"
-#BSUB -o {job_folder}{job_name_o}_logs_{rand_id}.stdout.%J
-#BSUB -e {job_folder}{job_name_e}_logs_{rand_id}.stderr.%J
+#BSUB -o {job_folder}{job_name.replace(' ','_')}_logs_{rand_id}.stdout.%J
+#BSUB -e {job_folder}{job_name.replace(' ','_')}_logs_{rand_id}.stderr.%J
 #BSUB -W 120:00
-#BSUB -n 1
+#BSUB -n {threads}
 #BSUB -q {q}
 #BSUB -P {project}
 
-{str_comd_list}'''.format(job_name = job_name.replace(' ','_'),
-                          job_folder=job_folder,
-                          job_name_o=job_name.replace(' ','_'),
-                          job_name_e=job_name.replace(' ','_'),
-                          str_comd_list=str_comd_list,
-                          random_number=rand_id,
-                          rand_id=rand_id,
-                          q=q,
-                          mem=mem,
-                          project=project,
-                          threads=threads
-                         )
-    
-    with open('{}.sh'.format(job_name.replace(' ','_')), 'w') as file:
+{str_comd_list}'''
+
+    with open(f'{job_name.replace(" ","_")}.sh', 'w') as file:
         file.write(cmd)
 
-    prejob_files = os.popen('ssh pegasus ls {}'.format(job_folder)).read().split('\n')[:-1]
-    os.system('scp {}.sh pegasus:{}'.format(job_name.replace(' ','_'), job_folder))
-    os.system('ssh pegasus "cd {}; bsub < {}.sh"'.format(job_folder, job_name.replace(' ','_')))
-    print('Submitting {} as ID_{} from folder {}: {:%Y-%m-%d %H:%M:%S}'.format(job_name,rand_id, job_folder,datetime.now()))
+    prejob_files = os.popen(f'ssh pegasus ls {job_folder}').read().split('\n')[:-1]
+    os.system(f'scp {job_name.replace(" ", "_")}.sh pegasus:{job_folder}')
+    os.system(f'''ssh pegasus "cd {job_folder}; bsub < {job_name.replace(' ','_')}.sh"''')
+    print(f'Submitting {job_name} as ID_{rand_id} from folder {job_folder}: {datetime.now():%Y-%m-%d %H:%M:%S}')
 
     return (rand_id, job_folder, prejob_files, job_name)
 
+
 def ssh_check(ID, job_folder, prejob_files=None, wait=True, return_filetype=None, load=False, check_IO_logs=None, sleep=10, job_name=''):
     '''
-    Checks for pegasus jobs sent by ssh_job and prints contents of the log file.  
+    Checks for pegasus jobs sent by ssh_job and prints contents of the log file.
     Optionally copies and/or loads the results file.
-    
+
     Inputs
     ------
     Job ID: Job ID
@@ -973,10 +984,9 @@ def ssh_check(ID, job_folder, prejob_files=None, wait=True, return_filetype=None
     None
 
     '''
-    jobfolder = job_folder if job_folder.endswith('/') else '{}/'.format(job_folder)
-
+    job_folder = job_folder if job_folder.endswith('/') else f'{job_folder}/'
     jobs_list = os.popen('ssh pegasus bhist -w').read()
-    job = [j for j in re.findall('ID_(\d+)', jobs_list) if j == ID]
+    job = [j for j in re.findall(r'ID_(\d+)', jobs_list) if j == ID]
     if len(job) != 0:
         print('Job ID_{} is not complete: {:%Y-%m-%d %H:%M:%S}'.format(ID, datetime.now()))
     else:
@@ -989,7 +999,7 @@ def ssh_check(ID, job_folder, prejob_files=None, wait=True, return_filetype=None
         running = True
         while running:
             jobs_list = os.popen('ssh pegasus "bhist -w"').read()
-            job = [j for j in re.findall('ID_(\d+)', jobs_list) if j == ID]
+            job = [j for j in re.findall(r'ID_(\d+)', jobs_list) if j == ID]
             if len(job) == 0:
                 running = False
             else:
@@ -999,30 +1009,31 @@ def ssh_check(ID, job_folder, prejob_files=None, wait=True, return_filetype=None
 
     if load:
         os.makedirs('ssh_files/{}/'.format(ID), exist_ok=True)
-        post_files = os.popen('ssh pegasus ls {}*{}'.format(job_folder,return_filetype)).read().split('\n')[:-1]
+        post_files = os.popen('ssh pegasus ls {}*{}'.format(job_folder, return_filetype)).read().split('\n')[:-1]
 
         if prejob_files is None:
             prejob_files = []
         import_files = [file for file in post_files if file not in prejob_files]
 
         for file in import_files:
-            print('Copying {} to {}/ssh_files/{}{}/'.format(file, os.getcwd(), job_name,ID))
-            os.system('scp pegasus:{} ssh_files/{}{}/{}'.format(file, job_name,ID,file.split('/')[-1]))
-            image_display('ssh_files/{}{}/{}'.format(job_name,ID,file.split('/')[-1]))
+            print('Copying {} to {}/ssh_files/{}{}/'.format(file, os.getcwd(), job_name, ID))
+            os.system('scp pegasus:{} ssh_files/{}{}/{}'.format(file, job_name, ID, file.split('/')[-1]))
+            image_display('ssh_files/{}{}/{}'.format(job_name, ID, file.split('/')[-1]))
 
     if check_IO_logs:
-        logs= {'ErrorFile':'{}/*_logs_{}.stderr*'.format(job_folder, ID),
-               'OutFile':'{}/*_logs_{}.stdout*'.format(job_folder, ID)
-              }
+        logs = {'ErrorFile': '{}/*_logs_{}.stderr*'.format(job_folder, ID),
+                'OutFile': '{}/*_logs_{}.stdout*'.format(job_folder, ID)
+                }
         os.makedirs('logs/', exist_ok=True)
-        for key,log in logs.items():
+        for key, log in logs.items():
             os.system("scp 'pegasus:{}' 'logs/ID_{}_{}.txt'".format(log, ID, key))
-            if os.path.isfile('logs/ID_{}_{}.txt'.format(ID,key)):
-                print('logs/ID_{} {}:'.format(ID,key))
-                with open('logs/ID_{}_{}.txt'.format(ID,key)) as file:
+            if os.path.isfile('logs/ID_{}_{}.txt'.format(ID, key)):
+                print('logs/ID_{} {}:'.format(ID, key))
+                with open('logs/ID_{}_{}.txt'.format(ID, key)) as file:
                     print(file.read())
 
-def deeptools(regions, signals, matrix_name, out_name, pegasus_folder, title='', bps=(1500,1500,4000), type='center', scaled_names=('TSS','TES'), make=('matrix','heatmap','heatmap_group','profile', 'profile_group')):
+
+def deeptools(regions, signals, matrix_name, out_name, pegasus_folder, copy=False, title='', bps=(1500, 1500, 4000), type='center', scaled_names=('TSS', 'TES'), make=('matrix', 'heatmap', 'heatmap_group', 'profile', 'profile_group')):
     '''
     Inputs
     ------
@@ -1036,15 +1047,14 @@ def deeptools(regions, signals, matrix_name, out_name, pegasus_folder, title='',
     scaled_names: optional names for scaled start and end (default ('TSS','TES'))
     make: tuple of deeptool commands.  options: matrix, heatmap, heatmap_group, profile, profile_group
     copy: bool.  Copy region and signal files to peagasus
-    copy_folder: folder to copy into
 
     Returns
     -------
     string of commands for ssh_job
 
     '''
-    pegasus_folder = pegasus_folder if pegasus_folder.endswith('/') else '{}/'.format(pegasus_folder)
-    os.system("ssh pegasus 'mkdir {}'".format(pegasus_folder))
+    pegasus_folder = pegasus_folder if pegasus_folder.endswith('/') else f'{pegasus_folder}/'
+    os.system(f"ssh pegasus 'mkdir {pegasus_folder}'")
 
     make_lower = [x.lower() for x in make]
 
@@ -1053,71 +1063,126 @@ def deeptools(regions, signals, matrix_name, out_name, pegasus_folder, title='',
         deepHeat = "--refPointLabel 'Peak Center'"
         deepProf = "--refPointLabel 'Peak Center'"
     else:
-        deepMat = 'scale-regions --regionBodyLength {bp3}'.format(str(bps[2]))
-        deepHeat = '--startLabel {} --endLabel {}'.format(scaled_names[0],scaled_names[1])
-        deepProf = '--startLabel {} --endLabel {}'.format(scaled_names[0],scaled_names[1])
-        
-    cmd_list = ['module rm python share-rpms65', 'source activate deeptools']
-    
-    print('Copying region files to pegasus...')
-    for region in regions.values():
-        if os.popen('''ssh pegasus "if [ -f {}{} ]; then echo 'True' ; fi"'''.format(pegasus_folder, region.split('/')[-1])).read() != 'True\n':
-            print('Copying {} to pegasus at {}.'.format(region,pegasus_folder))
-            os.system("scp {} pegasus:{}".format(region,pegasus_folder))
-        else:
-            print('{} found in {}.'.format(region,pegasus_folder))
-    
-    print('Copying signal files to pegasus...')
-    for signal in signals.values():
-        if os.popen('''ssh pegasus "if [ -f {}/{} ]; then echo 'True' ; fi"'''.format(pegasus_folder, signal.split('/')[-1])).read() != 'True\n':
-            print('Copying {} to {}.'.format(signal, pegasus_folder))
-            os.system("scp {} pegasus:{}".format(signal,pegasus_folder))
+        deepMat = f'scale-regions --regionBodyLength {bps[2]}'
+        deepHeat = f'--startLabel {scaled_names[0]} --endLabel {scaled_names[1]}'
+        deepProf = f'--startLabel {scaled_names[0]} --endLabel {scaled_names[1]}'
 
-    pegasus_region_path = ' '.join(["{}{}".format(pegasus_folder,region_path.split('/')[-1]) for region_path in regions.values()])
-    pegasus_signal_path = ' '.join(["{}{}".format(pegasus_folder,signal_path.split('/')[-1]) for signal_path in signals.values()])
+    cmd_list = ['module rm python share-rpms65', 'source activate deeptools']
+
+    if copy:
+        print('Copying region files to pegasus...')
+        for region in regions.values():
+            if os.popen(f'''ssh pegasus "if [ -f {pegasus_folder}{region.split('/')[-1]}]; then echo 'True' ; fi"''').read() != 'True\n':
+                print(f'Copying {region} to pegasus at {pegasus_folder}.')
+                os.system(f"scp {region} pegasus:{pegasus_folder}")
+            else:
+                print(f'{region} found in {pegasus_folder}.')
+
+        print('Copying signal files to pegasus...')
+        for signal in signals.values():
+            if os.popen(f'''ssh pegasus "if [ -f {pegasus_folder}/{signal.split('/')[-1]} ]; then echo 'True' ; fi"''').read() != 'True\n':
+                print(f'Copying {signal} to {pegasus_folder}.')
+                os.system(f"scp {signal} pegasus:{pegasus_folder}")
+
+        pegasus_region_path = ' '.join([f"{pegasus_folder}{region_path.split('/')[-1]}" for region_path in regions.values()])
+        pegasus_signal_path = ' '.join([f"{pegasus_folder}{signal_path.split('/')[-1]}" for signal_path in signals.values()])
+    else:
+        pegasus_region_path = ' '.join([f'{region_path}' for region_path in regions.values()])
+        pegasus_signal_path = ' '.join([f'{signal_path}' for signal_path in signals.values()])
 
     if 'matrix' in make_lower:
-        computeMatrix = "computeMatrix {deepMat} -a {bp1} -b {bp2} -p 4 -R {region_path} -S {signal_path} --samplesLabel {signal_name} -o {matrix_name}.matrix.gz".format(
-                                deepMat=deepMat,
-                                bp1=str(bps[0]),
-                                bp2=str(bps[1]),
-                                region_path=pegasus_region_path,
-                                signal_path=pegasus_signal_path,
-                                signal_name=' '.join(["{}".format(signal_name) for signal_name in signals.keys()]),
-                                matrix_name=matrix_name
-                                )
+        signal_name = ' '.join(["{}".format(signal_name) for signal_name in signals.keys()])
+        computeMatrix = f"computeMatrix {deepMat} -a {bps[0]} -b {bps[1]} -p 4 -R {pegasus_region_path} -S {pegasus_signal_path} --samplesLabel {signal_name} -o {matrix_name}.matrix.gz"
         cmd_list.append(computeMatrix)
 
     if 'heatmap' in make_lower or 'heatmap_group' in make_lower:
-        plotHeatmap_base = "plotHeatmap -m {matrix_name}.matrix.gz --dpi 300 {deepHeat} --regionsLabel {region_name} --plotTitle '{title}' --whatToShow 'heatmap and colorbar' --colorMap Reds -out {out_name}_heatmap".format(
-                                matrix_name=matrix_name,
-                                deepHeat=deepHeat,
-                                region_name=' '.join(["{}".format(region_name) for region_name in regions.keys()]),
-                                title=title.replace('_',' '),
-                                out_name=out_name
-                                )
+        region_name = ' '.join(["{}".format(region_name) for region_name in regions.keys()])
+        plotHeatmap_base = f"plotHeatmap -m {matrix_name}.matrix.gz --dpi 300 {deepHeat} --regionsLabel {region_name} --plotTitle '{title.replace('_',' ')}' --whatToShow 'heatmap and colorbar' --colorMap Reds -out {out_name}_heatmap"
         if 'heatmap' in make_lower:
-            cmd_list.append("{}.png".format(plotHeatmap_base))
+            cmd_list.append(f"{plotHeatmap_base}.png")
         if 'heatmap_group' in make_lower:
-            cmd_list.append("{}_perGroup.png --perGroup".format(plotHeatmap_base))
+            cmd_list.append(f"{plotHeatmap_base}_perGroup.png --perGroup")
 
     if 'profile' in make_lower or 'profile_group' in make_lower:
-        plotProfile_base = "plotProfile -m {matrix_name}.matrix.gz --dpi 300 {deepProf} --plotTitle '{title}' --regionsLabel {region_name} -out {out_name}_profile".format(
-                                matrix_name=matrix_name,
-                                deepProf=deepProf,
-                                title=title.replace('_',' '),
-                                region_name = ' '.join(["{}".format(region_name) for region_name in regions.keys()]),
-                                out_name=out_name
-                                )
+        region_name = ' '.join(["{}".format(region_name) for region_name in regions.keys()])
+        plotProfile_base = f"plotProfile -m {matrix_name}.matrix.gz --dpi 300 {deepProf} --plotTitle '{title.replace('_',' ')}' --regionsLabel {region_name} -out {out_name}_profile"
         if 'profile' in make_lower:
-            cmd_list.append("{}.png".format(plotProfile_base))
+            cmd_list.append(f"{plotProfile_base}.png")
         if 'profile_group' in make_lower:
-            cmd_list.append("{}_perGroup.png --perGroup".format(plotProfile_base))
+            cmd_list.append(f"{plotProfile_base}_perGroup.png --perGroup")
 
     return cmd_list
 
 
-def gsea_barplot(out_dir,pos_file,neg_file,gmt_name,max_number=20):
+def order_cluster(dict_set, df, gene_column_name):
+    from scipy.cluster import hierarchy
+
+    out_list = []
+    df['group'] = 'NA'
+
+    for name, genes in dict_set.items():
+        reduced_df = df[df[gene_column_name].isin(genes)]
+        linkage = hierarchy.linkage(reduced_df.drop(columns=[gene_column_name, 'group']), method='ward', metric='euclidean')
+        order = hierarchy.dendrogram(linkage, no_plot=True, color_threshold=-np.inf)['leaves']
+        gene_list = reduced_df.iloc[order][gene_column_name].tolist()
+        out_list += gene_list
+
+        gene_symbol = [gene.split('_') for gene in gene_list]
+        with open(f'{name}_genes.txt', 'w') as file:
+            for gene in gene_symbol:
+                    file.write(f'{gene}\n')
+
+        df.loc[gene_list, 'group'] = name
+
+    ordered_df = df.loc[out_list]
+    color_mapping = dict(zip(df.group.unique(), sns.hls_palette(len(df.group.unique()), s=.7)))
+    row_colors = df.group.map(color_mapping)
+
+    sns.set(context='notebook', font='Arial', palette='RdBu_r', style='white', rc={'figure.dpi': 300})
+    clustermap = sns.clustermap(ordered_df.loc[out_list].drop(columns=[gene_column_name, 'group']), z_score=0, row_colors=row_colors, row_cluster=False, col_cluster=False, cmap='RdBu_r', yticklabels=False)
+    name = '_'.join(list(dict_set.keys()))
+
+    legend = [mpatches.Patch(color=color, label=label.replace('_', ' ')) for label, color in color_mapping.items() if label != 'NA']
+    clustermap.ax_heatmap.legend(handles=legend, bbox_to_anchor=(-.1, .9, 0., .102))
+
+    clustermap.savefig(f'{name}.png', dpi=300)
+
+    return out_list, ordered_df, clustermap
+
+
+def ranked_ordered_cluster(dict_set, in_df, gene_column_name, dict_sort_col, ascending=False):
+    out_list = []
+    df = in_df.copy()
+    df['group'] = 'NA'
+
+    for name, genes in dict_set.items():
+        reduced_df = df[df[gene_column_name].isin(genes)].copy()
+        zscored = reduced_df.drop(columns=[gene_column_name, 'group']).T.apply(stats.zscore).T.copy()
+        order = zscored.sort_values(by=dict_sort_col[name], ascending=ascending).index.tolist()
+        gene_list = reduced_df.loc[order, gene_column_name].tolist()
+        out_list += gene_list
+
+        gene_symbol = [gene.split('_')[-1] for gene in gene_list]
+        with open(f'{name}_genes.txt', 'w') as file:
+            for gene in gene_symbol:
+                    file.write(f'{gene}\n')
+
+        df.loc[gene_list, 'group'] = name
+
+    ordered_df = df.loc[out_list]
+    color_mapping = dict(zip(df.group.unique(), sns.hls_palette(len(df.group.unique()), s=.7)))
+    row_colors = df.group.map(color_mapping)
+
+    sns.set(context='notebook', font='Arial', palette='RdBu_r', style='white', rc={'figure.dpi': 300})
+    clustermap = sns.clustermap(ordered_df.loc[out_list].drop(columns=[gene_column_name, 'group']), z_score=0, row_colors=row_colors, row_cluster=False, col_cluster=False, cmap='RdBu_r', yticklabels=False)
+
+    legend = [mpatches.Patch(color=color, label=label.replace('_', ' ')) for label, color in color_mapping.items() if label != 'NA']
+    clustermap.ax_heatmap.legend(handles=legend, bbox_to_anchor=(-.1, .9, 0., .102))
+
+    return out_list, ordered_df, clustermap
+
+
+def gsea_barplot(out_dir, pos_file, neg_file, gmt_name, max_number=20):
     '''
     Inputs
     ------
@@ -1132,40 +1197,154 @@ def gsea_barplot(out_dir,pos_file,neg_file,gmt_name,max_number=20):
     string of save file
 
     '''
-    
+
     out_dir = out_dir if out_dir.endswith('/') else '{}/'.format(out_dir)
-    out_dir = '' if out_dir == '/' else out_dir 
+    out_dir = '' if out_dir == '/' else out_dir
     os.makedirs(out_dir, exist_ok=True)
     pos = pd.read_table(pos_file).head(max_number) if os.path.isfile(pos_file) else pd.DataFrame(columns=['FDR q-val'])
     pos[gmt_name] = [' '.join(name.split('_')[1:]) for name in pos.NAME.tolist()]
     neg = pd.read_table(neg_file).head(max_number) if os.path.isfile(neg_file) else pd.DataFrame(columns=['FDR q-val'])
     neg[gmt_name] = [' '.join(name.split('_')[1:]) for name in neg.NAME.tolist()]
-    
-    sns.set(context='paper', font='Arial',font_scale=.9, style='white', rc={'figure.dpi': 300, 'figure.figsize':(8,6)})
-    fig,(ax1,ax2) = plt.subplots(ncols=1, nrows=2)
+
+    sns.set(context='paper', font='Arial', font_scale=.9, style='white', rc={'figure.dpi': 300, 'figure.figsize': (8, 6)})
+    fig, (ax1, ax2) = plt.subplots(ncols=1, nrows=2)
     fig.suptitle('{} GSEA enrichment\n(q<0.05, max {})'.format(gmt_name, max_number))
-    
+
     if len(pos[pos['FDR q-val'] < 0.05]) > 0:
-        UP = sns.barplot(data=pos[pos['FDR q-val'] < 0.05], x = 'NES', y=gmt_name, color='firebrick', ax=ax1)
+        UP = sns.barplot(data=pos[pos['FDR q-val'] < 0.05], x='NES', y=gmt_name, color='firebrick', ax=ax1)
         UP.set_title('Positive Enrichment')
         sns.despine()
-       
+
     if len(neg[neg['FDR q-val'] < 0.05]) > 0:
-        DN = sns.barplot(data=neg[neg['FDR q-val'] < 0.05], x = 'NES', y=gmt_name, color='steelblue', ax=ax2)
+        DN = sns.barplot(data=neg[neg['FDR q-val'] < 0.05], x='NES', y=gmt_name, color='steelblue', ax=ax2)
         DN.set_title('Negative Enrichment')
         sns.despine()
-    
+
     try:
-        plt.tight_layout(h_pad=1,w_pad=1)
+        plt.tight_layout(h_pad=1, w_pad=1)
     except ValueError:
         pass
 
     plt.subplots_adjust(top=0.88)
-    file='{}{}_GSEA_NES_plot.png'.format(out_dir,gmt_name)
+    file = f'{out_dir}{gmt_name}_GSEA_NES_plot.png'
     fig.savefig(file, dpi=300)
     plt.close()
 
     return file
+
+
+def hinton(df, filename, folder, max_weight=None):
+    """Draw Hinton diagram for visualizing a weight matrix."""
+
+    folder = folder if folder.endswith('/') else f'{folder}/'
+    folder = f'{os.getcwd()}/' if folder == '/' else folder
+
+    sns.set(context='paper', rc={'figure.figsize': (8, 8), 'figure.dpi': 200})
+
+    matrix = df.values
+    plt.clf()
+    plt.figure(figsize=(10, 10), dpi=200)
+    ax = plt.gca()
+
+    if not max_weight:
+        max_weight = 2 ** np.ceil(np.log(np.abs(matrix).max()) / np.log(2))
+
+    ax.patch.set_facecolor('white')
+    ax.set_aspect('equal', 'box')
+    ax.xaxis.set_major_locator(plt.NullLocator())
+    ax.yaxis.set_major_locator(plt.NullLocator())
+    ax.axis('off')
+
+    for (x, y), w in np.ndenumerate(matrix):
+        color = 'red' if w > 0 else 'blue'
+        size = np.sqrt(np.abs(w) / max_weight)
+        rect = plt.Rectangle([y - size / 2, x - size / 2], size, size,
+                             facecolor=color, edgecolor=color)
+        ax.add_patch(rect)
+
+    fraction = len(df.index.tolist())
+    increment = (.915 / fraction)
+    y = 0.942
+    for x in df.index.tolist():
+        ax.annotate(x, xy=(-.15, y), xycoords='axes fraction')
+        y -= increment
+    ax.annotate("Components", xy=(.4, 0), xycoords='axes fraction', size=14)
+    ax.autoscale_view()
+    ax.annotate('Hinton Plot of Independent Components', xy=(.14, 1), xycoords='axes fraction', size=20)
+    ax.invert_yaxis()
+    ax.figure.savefig(f'{folder}{filename}.png')
+
+
+def genomic_annotation_plots(dict_of_annotated_dfs, txdb_db, filename='Genomic_Annotation_Plot', bar_width=.75, figsize=(10, 5)):
+
+    '''
+    from chipseeker annotation output as df
+    txdb_db = UCSC or Ensembl
+
+    '''
+
+    db = '(uc' if txdb_db == 'UCSC' else '(ENS'
+    order = ['Promoter (<=1kb)', 'Promoter (1-2kb)', 'Promoter (2-3kb)', 'Intron', 'Exon', "3' UTR", "5' UTR", 'Downstream (<1kb)', 'Downstream (1-2kb)', 'Downstream (2-3kb)', 'Distal Intergenic']
+    Anno_df = pd.DataFrame(index=order)
+
+    for name, df in dict_of_annotated_dfs.items():
+        df['annotation'] = [anno.replace(f' {db}', f'_{db}').split('_')[0] for anno in df.annotation.tolist()]
+        df_anno = df.groupby('annotation').count().iloc[:, 0]
+        Anno_df[name] = df_anno / df_anno.sum()
+
+    Anno_df[Anno_df.isna()] = 0
+
+    sns.set(style='white', font='Arial', palette='colorblind', font_scale=1.2)
+    f = plt.figure(figsize=figsize)
+    Anno_df.T.plot(kind='barh', stacked=True, ax=f.gca(), width=bar_width, lw=0.1)
+    plt.legend(loc=3, bbox_to_anchor=(1.0, 0))
+    plt.xlabel('Fraction')
+    sns.despine()
+    plt.tight_layout()
+    plt.savefig(f'{filename}.png', dpi=300)
+
+
+def extract_AQUAS_report_data(base_folder, out_folder, replicate=False):
+    '''
+    Inputs
+    -----
+    base_folder:  AQUAS results folder.  Will use subfolders for sample name and look for report in those subfolders.
+    replicate: Whether the ChIPseq was performed as a repliate or not.
+
+    Returns
+    -----
+    DataFrame of results
+    '''
+
+    reports = glob.glob(f'{base_folder}/*/*report.html')
+    out_folder = os.getcwd() if out_folder == '' else out_folder
+    out_folder = out_folder if out_folder.endswith('/') else f'{out_folder}/'
+
+    if replicate is True:
+        raise AssertionError('Not set up for replicates yet.')
+
+    results_df = pd.DataFrame(index=['Percent_mapped', 'Mapped_Reads', 'Fraction_Duplicated', 'S_JS_Distance', 'PBC1', 'RSC', 'Raw_Peak_Number', 'N_optimal_overlap_peaks', 'FrIP_IDR', 'N_IDR_peaks'])
+    for file in reports:
+        name = re.findall(r'.*/(.*)_report.html', file)[0]
+        report = pd.read_html(file)
+        series = pd.Series()
+        series['Percent_mapped'] = report[1].iloc[7, 1]
+        series['Mapped_Reads'] = report[2].iloc[5, 1]
+        series['Fraction_Duplicated'] = report[3].iloc[7, 1]
+        series['S_JS_Distance'] = report[4].iloc[7, 1]
+        series['PBC1'] = report[5].iloc[6, 1]
+        series['RSC'] = report[6].iloc[8, 1]
+        series['Raw_Peak_Number'] = report[7].iloc[0, 1]
+        series['N_optimal_overlap_peaks'] = report[10].iloc[4, 1]
+        series['FrIP_IDR'] = report[11].iloc[0, 1]
+        series['N_IDR_peaks'] = report[12].iloc[4, 1]
+        results_df[name] = series
+
+    for index in results_df.index.tolist():
+        plot_col(results_df.loc[index], out=out_folder, title=f'{index}', ylabel=index.replace('_', ' '), plot_type=['violin', 'swarm'])
+
+    return results_df
+
 
 '''
 def get_text_positions(x_data, y_data, txt_width, txt_height):
@@ -1176,7 +1355,7 @@ def get_text_positions(x_data, y_data, txt_width, txt_height):
     a = zip(y_data, x_data)
     text_positions = y_data.copy()
     for index, (y, x) in enumerate(a):
-        local_text_positions = [i for i in a if i[0] > (y - txt_height) 
+        local_text_positions = [i for i in a if i[0] > (y - txt_height)
                             and (abs(i[1] - x) < txt_width * 2) and i != (y,x)]
         if local_text_positions:
             sorted_ltp = sorted(local_text_positions)
@@ -1196,29 +1375,29 @@ def text_plotter(x_data, y_data, text_positions, axis,txt_width,txt_height):
     import numpy as np
     import matplotlib.pyplot as plt
     from numpy.random import *
-    
+
     for x,y,t in zip(x_data, y_data, text_positions):
         axis.text(x - txt_width, 1.01*t, '%d'%int(y),rotation=0, color='blue')
         if y != t:
-            axis.arrow(x, t,0,y-t, color='red',alpha=0.3, width=txt_width*0.1, 
-                       head_width=txt_width, head_length=txt_height*0.5, 
+            axis.arrow(x, t,0,y-t, color='red',alpha=0.3, width=txt_width*0.1,
+                       head_width=txt_width, head_length=txt_height*0.5,
                        zorder=0,length_includes_head=True)
 
 
- 
-def TSS_enhancer_bar(tss_bed, enhancer_bed, bed_dict, title, folder):    
+
+def TSS_enhancer_bar(tss_bed, enhancer_bed, bed_dict, title, folder):
     ##
 
     import pandas as pd
 
     Numbers = dict(TSS=[], Enhancer=[], Other=[], Total=[], TSS_F=[], Enh_F=[], Other_F=[], name=[])
-                   
+
     for name,bed in bed_dict.items():
         tss=len(bed.sort().merge().intersect(tss_bed.sort().merge()).intersect(enhancer_bed.sort().merge(),v=True))
         enhancer=len(bed.sort().merge().intersect(enhancer_bed.sort().merge()).intersect(tss_bed.sort().merge(),v=True))
         other = len(bed.sort().merge().intersect(enhancer_bed.sort().merge(), v=True).intersect(tss_bed.sort().merge(),v=True))
         total = tss + enhancer + other
-        
+
         Numbers['TSS'].append(tss)
         Numbers['Enhancer'].append(enhancer)
         Numbers['Other'].append(other)
@@ -1227,7 +1406,7 @@ def TSS_enhancer_bar(tss_bed, enhancer_bed, bed_dict, title, folder):
         Numbers['Enh_F'].append(enhancer/total)
         Numbers['Other_F'].append(other/total)
         Numbers['name'].append(name)
-        
+
     df= pd.DataFrame(Numbers, index=Numbers['name'])
     df['Peak_type']=df.name.apply(lambda x: x.split(' ')[-1])
     df['IP']=df.name.apply(lambda x: x.split(' ')[0])
@@ -1302,12 +1481,12 @@ def chouchou(key, df):
 
     sns.set(context='paper', font_scale=2, font='Arial', style='white')
     plt.figure(dpi=300, figsize=(5,5))
-    
+
     plt.plot([1,0], c='grey', linewidth=3)
-    plt.scatter(x=df['PRMT5i(D/Dx)'], 
-                y=df['PARPi(D/Dx)'], 
-                c='red', s=120, 
-                edgecolors='darkred', 
+    plt.scatter(x=df['PRMT5i(D/Dx)'],
+                y=df['PARPi(D/Dx)'],
+                c='red', s=120,
+                edgecolors='darkred',
                 linewidths=.7)
     plt.xlim(0,1.5)
     plt.ylim(0,1.5)
@@ -1316,8 +1495,8 @@ def chouchou(key, df):
     plt.xlabel("D$_{PRMT5i}$/Dx$_{PRMT5i}$")
     plt.ylabel("D$_{PARPi}$/Dx$_{PARPi}$")
     plt.text(s=key,
-             x=1.4, y=1.4, 
-             horizontalalignment='right', 
+             x=1.4, y=1.4,
+             horizontalalignment='right',
              verticalalignment='top')
 
     plt.tight_layout()
