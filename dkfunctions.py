@@ -35,6 +35,13 @@ else:
     __version__ = f'v0.1, {datetime.now():%Y-%m-%d}'
 
 
+def val_folder(folder):
+    folder = folder if folder.endswith('/') else f'{folder}/'
+    folder = f'{os.getcwd()}/' if folder == '/' else folder
+    os.makedirs(folder, exist_ok=True)
+    return folder
+
+
 def read_pd(file, *args, **kwargs):
     if (file.split('.')[-1] == 'txt') or (file.split('.')[-1] == 'tab'):
         return pd.read_table(file, header=0, index_col=0, *args, **kwargs)
@@ -313,6 +320,7 @@ def plot_venn3_set(dict_of_sets, string_name_of_overlap, folder):
     folder = f'{folder}venn3/' if folder.endswith('/') else f'{folder}/venn3/'
     os.makedirs(folder, exist_ok=True)
 
+    plt.clf()
     sns.set(style='white', rc={'figure.figsize': (7, 7)})
 
     font = {'family': 'sans-serif',
@@ -370,6 +378,8 @@ def plot_venn3_counts(element_list, set_labels, string_name_of_overlap, folder):
     '''
     folder = f'{folder}venn3/' if folder.endswith('/') else f'{folder}/venn3/'
     os.makedirs(folder, exist_ok=True)
+
+    plt.clf()
 
     sns.set(style='white', rc={'figure.figsize': (7, 7)})
 
@@ -588,7 +598,7 @@ def overlap_three(bed_dict, genome=None):
 
     print(f'{labTup}\n{lenTup}')
 
-    plot_venn3_counts(lenTup[4:], names, '', out)
+    plot_venn3_counts(lenTup[4:], names, '_'.join(names), out)
 
     for key, bed in sorted_dict.items():
         if len(bed) > 1:
@@ -735,10 +745,7 @@ def plot_col(df, title, ylabel, out='', xy=(None, None), xticks=[''], plot_type=
     None
 
     '''
-    if len(out) != 0:
-        out = out if out.endswith('/') else '{}/'.format(out)
-    out = '{}colplot/'.format(out)
-    os.makedirs(out, exist_ok=True)
+    out = val_folder(out)
 
     plt.clf()
     sns.set(context='paper', font='Arial', font_scale=2, style='white', rc={'figure.dpi': 300, 'figure.figsize': (5, 6)})
@@ -1304,7 +1311,7 @@ def genomic_annotation_plots(dict_of_annotated_dfs, txdb_db, filename='Genomic_A
     plt.savefig(f'{filename}.png', dpi=300)
 
 
-def extract_AQUAS_report_data(base_folder, out_folder, replicate=False):
+def extract_AQUAS_report_data(base_folder, out_folder='', histone=False, replicate=False):
     '''
     Inputs
     -----
@@ -1317,8 +1324,8 @@ def extract_AQUAS_report_data(base_folder, out_folder, replicate=False):
     '''
 
     reports = glob.glob(f'{base_folder}/*/*report.html')
-    out_folder = os.getcwd() if out_folder == '' else out_folder
-    out_folder = out_folder if out_folder.endswith('/') else f'{out_folder}/'
+    out_folder = val_folder(out_folder)
+    base_folder = val_folder(base_folder)
 
     if replicate is True:
         raise AssertionError('Not set up for replicates yet.')
@@ -1336,14 +1343,99 @@ def extract_AQUAS_report_data(base_folder, out_folder, replicate=False):
         series['RSC'] = report[6].iloc[8, 1]
         series['Raw_Peak_Number'] = report[7].iloc[0, 1]
         series['N_optimal_overlap_peaks'] = report[10].iloc[4, 1]
-        series['FrIP_IDR'] = report[11].iloc[0, 1]
-        series['N_IDR_peaks'] = report[12].iloc[4, 1]
+        if histone is False:
+            series['FrIP_IDR'] = report[11].iloc[0, 1]
+            series['N_IDR_peaks'] = report[12].iloc[4, 1]
         results_df[name] = series
 
     for index in results_df.index.tolist():
         plot_col(results_df.loc[index], out=out_folder, title=f'{index}', ylabel=index.replace('_', ' '), plot_type=['violin', 'swarm'])
 
     return results_df
+
+
+def overlap_four(bed_dict, genome=None):
+    '''
+    Takes a dictionary of four pybedtools.BedTool objects.
+    Merges all overlapping peaks for each bed into a master file.
+    Intersects beds to merged master file.
+    Performs annotations with ChIPseeker if genome is specified.
+
+    Inputs
+    ------
+    bed_dict:  dictionary of BedTool files
+    genome: 'hg38','hg19','mm10'
+
+    Returns
+    -------
+    Returns a dictionary of dataframes from unique and overlap peaks.
+    If genome is specified, includes a dictionary of annotated genes.
+    '''
+    from collections import OrderedDict
+
+    names = list(bed_dict.keys())
+
+    Folder = f'{os.getcwd()}/'
+    subfolder = f"{names[0].replace(' ', '_')}-{ names[1].replace(' ', '_')}-{names[2].replace(' ', '_')}-{names[3].replace(' ', '_')}overlap/"
+
+    out = f'{Folder}{subfolder}'
+    os.makedirs(out, exist_ok=True)
+    print(f'Output files are found in {out}')
+    print(f'A: {names[0]}, B: {names[1]}, C: {names[2]}, D: {names[3]}')
+
+    master = bed_dict[names[0]].cat(bed_dict[names[1]]).cat(bed_dict[names[2]]).sort().merge().cat(bed_dict[names[3]]).sort().merge()
+
+    A = bed_dict[names[0]].sort().merge()
+    B = bed_dict[names[1]].sort().merge()
+    C = bed_dict[names[2]].sort().merge()
+    D = bed_dict[names[3]].sort().merge()
+
+    sorted_dict = OrderedDict({'master': master, 'A': A, 'B': B, 'C': C, 'D': D})
+    sorted_dict['Abcd'] = (master + A - B - C - D)
+    sorted_dict['aBcd'] = (master + B - A - C - D)
+    sorted_dict['abCd'] = (master + C - A - B - D)
+
+    sorted_dict['ABcd'] = (master + A + B - C - D)
+    sorted_dict['AbCd'] = (master + A + C - B - D)
+    sorted_dict['AbcD'] = (master + A + D - C - D)
+    sorted_dict['aBCd'] = (master + B + C - A - D)
+    sorted_dict['aBcD'] = (master + B + D - A - C)
+    sorted_dict['abCD'] = (master + C + D - A - B)
+
+    sorted_dict['ABCd'] = (master + A + B + C - D)
+    sorted_dict['ABcD'] = (master + A + B + D - C)
+    sorted_dict['AbCD'] = (master + A + C + D - B)
+    sorted_dict['aBCD'] = (master + B + C + D - A)
+
+    sorted_dict['ABCD'] = (master + A + B + C + D)
+
+    labTup = tuple(key for key in sorted_dict.keys())
+    lenTup = tuple(len(bed) for bed in sorted_dict.values())
+
+    print(f'{labTup}\n{lenTup}')
+
+    for key, bed in sorted_dict.items():
+        if len(bed) > 1:
+            bed.to_dataframe().to_csv(f"{out}{key.replace(' ', '_')}-peaks-from-mergedPeaks.bed", header=None, index=None, sep="\t")
+
+    if bool(genome):
+        print('Annotating ovelapped peaks...')
+        unikey = '{}_unique'
+        unianno = '{}_unique_annotated'
+        return_dict = annotate_peaks({unikey.format(key): bed.to_dataframe() for key, bed in sorted_dict.items() if len(bed) > 0}, out, genome=genome)
+
+        gene_dict = {names[0]: return_dict[unianno.format('A')].SYMBOL.unique().tolist(),
+                     names[1]: return_dict[unianno.format('B')].SYMBOL.unique().tolist(),
+                     names[2]: return_dict[unianno.format('C')].SYMBOL.unique().tolist(),
+                     names[3]: return_dict[unianno.format('D')].SYMBOL.unique().tolist()
+                     }
+
+        for name, gene_list in gene_dict.items():
+            with open(f'{out}{name}_all_peaks_annotated.txt', 'w') as fp:
+                for gene in gene_list:
+                    fp.write(f'{gene}\n')
+
+    return sorted_dict if genome is None else {**sorted_dict, **return_dict}
 
 
 '''
