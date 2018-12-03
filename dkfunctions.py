@@ -8,6 +8,7 @@ import re
 import random
 from datetime import datetime
 import time
+import pickle
 from math import floor, log10
 
 from pybedtools import BedTool
@@ -40,6 +41,10 @@ def val_folder(folder):
     folder = f'{os.getcwd()}/' if folder == '/' else folder
     os.makedirs(folder, exist_ok=True)
     return folder
+
+
+def image_display(file):
+    display(Image(file))
 
 
 def read_pd(file, *args, **kwargs):
@@ -507,7 +512,7 @@ def overlap_two(bed_dict, genome=None):
     return return_dict
 
 
-def enrichr(gene_list, description, out_dir):
+def enrichr(gene_list, description, out_dir, load=False):
     '''
     Performs GO Molecular Function, GO Biological Process and KEGG enrichment on a gene list.
     Uses enrichr.
@@ -525,26 +530,26 @@ def enrichr(gene_list, description, out_dir):
 
     '''
 
-    os.makedirs(out_dir, exist_ok=True)
+    out_dir = val_folder(out_dir)
 
-    gseapy.enrichr(gene_list=gene_list,
-                   description=f'{description}_KEGG',
-                   gene_sets='KEGG_2016',
-                   outdir=out_dir,
-                   format='png'
-                   )
-    gseapy.enrichr(gene_list=gene_list,
-                   description=f'{description}_GO_biological_process',
-                   gene_sets='GO_Biological_Process_2017b',
-                   outdir=out_dir,
-                   format='png'
-                   )
-    gseapy.enrichr(gene_list=gene_list,
-                   description=f'{description}_GO_molecular_function',
-                   gene_sets='GO_Molecular_Function_2017b',
-                   outdir=out_dir,
-                   format='png'
-                   )
+    scan = {'KEGG': 'KEGG_2016',
+            'GO_biological_process': 'GO_Biological_Process_2017b',
+            'GO_molecular_function': 'GO_Molecular_Function_2017b'
+            }
+
+    for nick, name in scan.items():
+        gseapy.enrichr(gene_list=gene_list,
+                       description=f'{description}_{nick}',
+                       gene_sets=name,
+                       outdir=out_dir,
+                       format='png'
+                       )
+
+        image_display(f'{out_dir}{name}.{description}_{nick}.enrichr.reports.png')
+
+    with open(f'{out_dir}{description}_genes.txt', 'w') as fp:
+        for gene in set(gene_list):
+            fp.write(f'{gene}\n')
 
 
 def overlap_three(bed_dict, genome=None):
@@ -598,7 +603,7 @@ def overlap_three(bed_dict, genome=None):
 
     print(f'{labTup}\n{lenTup}')
 
-    plot_venn3_counts(lenTup[4:], names, '_'.join(names), out)
+    plot_venn3_counts(lenTup[4:], names, f"{'_'.join(names)}-peak-overlaps", out)
 
     for key, bed in sorted_dict.items():
         if len(bed) > 1:
@@ -606,15 +611,15 @@ def overlap_three(bed_dict, genome=None):
 
     if bool(genome):
         print('Annotating ovelapped peaks...')
-        unikey = '{}_unique'
-        unianno = '{}_unique_annotated'
+        unikey = '{}'
+        unianno = '{}_annotated'
         return_dict = annotate_peaks({unikey.format(key): bed.to_dataframe() for key, bed in sorted_dict.items()}, out, genome=genome)
 
         Set1 = set(return_dict[unianno.format('A')].SYMBOL.unique().tolist())
         Set2 = set(return_dict[unianno.format('B')].SYMBOL.unique().tolist())
         Set3 = set(return_dict[unianno.format('C')].SYMBOL.unique().tolist())
 
-        plot_venn3_set({names[0]: Set1, names[1]: Set2, names[2]: Set3}, f'{names[0]}_{names[1]}_{names[2]}', out)
+        plot_venn3_set({names[0]: Set1, names[1]: Set2, names[2]: Set3}, f'{names[0]}_{names[1]}_{names[2]}-gene-overlaps', out)
 
     return sorted_dict if genome is None else {**sorted_dict, **return_dict}
 
@@ -1098,12 +1103,12 @@ def deeptools(regions, signals, matrix_name, out_name, pegasus_folder, copy=Fals
         pegasus_signal_path = ' '.join([f'{signal_path}' for signal_path in signals.values()])
 
     if 'matrix' in make_lower:
-        signal_name = ' '.join(["{}".format(signal_name) for signal_name in signals.keys()])
+        signal_name = ' '.join([f'''"{signal_name.replace('_', ' ')}"''' for signal_name in signals.keys()])
         computeMatrix = f"computeMatrix {deepMat} -a {bps[0]} -b {bps[1]} -p 4 -R {pegasus_region_path} -S {pegasus_signal_path} --samplesLabel {signal_name} -o {matrix_name}.matrix.gz"
         cmd_list.append(computeMatrix)
 
     if 'heatmap' in make_lower or 'heatmap_group' in make_lower:
-        region_name = ' '.join(["{}".format(region_name) for region_name in regions.keys()])
+        region_name = ' '.join([f'''"{region_name.replace('_', ' ')}"''' for region_name in regions.keys()])
         plotHeatmap_base = f"plotHeatmap -m {matrix_name}.matrix.gz --dpi 300 {deepHeat} --regionsLabel {region_name} --plotTitle '{title.replace('_',' ')}' --whatToShow 'heatmap and colorbar' --colorMap Reds -out {out_name}_heatmap"
         if 'heatmap' in make_lower:
             cmd_list.append(f"{plotHeatmap_base}.png")
@@ -1111,7 +1116,7 @@ def deeptools(regions, signals, matrix_name, out_name, pegasus_folder, copy=Fals
             cmd_list.append(f"{plotHeatmap_base}_perGroup.png --perGroup")
 
     if 'profile' in make_lower or 'profile_group' in make_lower:
-        region_name = ' '.join(["{}".format(region_name) for region_name in regions.keys()])
+        region_name = ' '.join([f'''"{region_name.replace('_', ' ')}"''' for region_name in regions.keys()])
         plotProfile_base = f"plotProfile -m {matrix_name}.matrix.gz --dpi 300 {deepProf} --plotTitle '{title.replace('_',' ')}' --regionsLabel {region_name} -out {out_name}_profile"
         if 'profile' in make_lower:
             cmd_list.append(f"{plotProfile_base}.png")
@@ -1394,10 +1399,11 @@ def overlap_four(bed_dict, genome=None):
     sorted_dict['Abcd'] = (master + A - B - C - D)
     sorted_dict['aBcd'] = (master + B - A - C - D)
     sorted_dict['abCd'] = (master + C - A - B - D)
+    sorted_dict['abcD'] = (master + D - A - B - C)
 
     sorted_dict['ABcd'] = (master + A + B - C - D)
     sorted_dict['AbCd'] = (master + A + C - B - D)
-    sorted_dict['AbcD'] = (master + A + D - C - D)
+    sorted_dict['AbcD'] = (master + A + D - C - B)
     sorted_dict['aBCd'] = (master + B + C - A - D)
     sorted_dict['aBcD'] = (master + B + D - A - C)
     sorted_dict['abCD'] = (master + C + D - A - B)
@@ -1412,7 +1418,9 @@ def overlap_four(bed_dict, genome=None):
     labTup = tuple(key for key in sorted_dict.keys())
     lenTup = tuple(len(bed) for bed in sorted_dict.values())
 
-    print(f'{labTup}\n{lenTup}')
+    gener = (f'{lab}: {size}' for lab, size in zip(labTup, lenTup))
+    for x in gener:
+        print(x)
 
     for key, bed in sorted_dict.items():
         if len(bed) > 1:
@@ -1420,8 +1428,8 @@ def overlap_four(bed_dict, genome=None):
 
     if bool(genome):
         print('Annotating ovelapped peaks...')
-        unikey = '{}_unique'
-        unianno = '{}_unique_annotated'
+        unikey = '{}'
+        unianno = '{}_annotated'
         return_dict = annotate_peaks({unikey.format(key): bed.to_dataframe() for key, bed in sorted_dict.items() if len(bed) > 0}, out, genome=genome)
 
         gene_dict = {names[0]: return_dict[unianno.format('A')].SYMBOL.unique().tolist(),
@@ -1434,6 +1442,9 @@ def overlap_four(bed_dict, genome=None):
             with open(f'{out}{name}_all_peaks_annotated.txt', 'w') as fp:
                 for gene in gene_list:
                     fp.write(f'{gene}\n')
+
+        with open(f'{out}Overlap_annotated_results.pkl', 'wb') as fp:
+            pickle.dump(return_dict, fp)
 
     return sorted_dict if genome is None else {**sorted_dict, **return_dict}
 
