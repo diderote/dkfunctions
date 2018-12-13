@@ -512,7 +512,7 @@ def overlap_two(bed_dict, genome=None):
     return return_dict
 
 
-def enrichr(gene_list, description, out_dir, load=False):
+def enrichr(gene_list, description, out_dir, scan=None, max_terms=10, load=False, figsize=(6, 12)):
     '''
     Performs GO Molecular Function, GO Biological Process and KEGG enrichment on a gene list.
     Uses enrichr.
@@ -522,6 +522,10 @@ def enrichr(gene_list, description, out_dir, load=False):
     gene_list: list of genes to perform enrichment on
     description: string description for title
     out_dir: output director
+    scan: dictionary with additional enrichr dbs to scan (http://amp.pharm.mssm.edu/Enrichr/#stats)
+    max_terms: limit return plot to this max
+    load: load results
+    figsize: change fig size
 
     Returns
     -------
@@ -532,20 +536,29 @@ def enrichr(gene_list, description, out_dir, load=False):
 
     out_dir = val_folder(out_dir)
 
-    scan = {'KEGG': 'KEGG_2016',
-            'GO_biological_process': 'GO_Biological_Process_2017b',
-            'GO_molecular_function': 'GO_Molecular_Function_2017b'
-            }
+    testscan = {'KEGG': 'KEGG_2016',
+                'GO_biological_process': 'GO_Biological_Process_2017b',
+                'GO_molecular_function': 'GO_Molecular_Function_2017b'
+                }
 
-    for nick, name in scan.items():
+    if isinstance(scan, dict):
+        testscan = {**testscan, **scan}
+
+    for nick, name in testscan.items():
         gseapy.enrichr(gene_list=gene_list,
+                       figsize=figsize,
+                       top_term=max_terms,
                        description=f'{description}_{nick}',
                        gene_sets=name,
                        outdir=out_dir,
                        format='png'
                        )
 
-        image_display(f'{out_dir}{name}.{description}_{nick}.enrichr.reports.png')
+        if load:
+            png = f'{out_dir}{name}.{description}_{nick}.enrichr.reports.png'
+            if os.path.isfile(png):
+                print(f'{description}_{nick}:')
+                image_display(png)
 
     with open(f'{out_dir}{description}_genes.txt', 'w') as fp:
         for gene in set(gene_list):
@@ -680,53 +693,6 @@ def make_df(dict_of_sets, name):
     df.to_excel('{}/{}.xls'.format(out_dir, name.replace(' ', '_')), index=False)
 
     return df
-
-
-def enrichr_topterm(gene_list, description, out_dir, top_term, figsize):
-    '''
-    Performs GO Molecular Function, GO Biological Process and KEGG enrichment on a gene list.
-    Uses enrichr.
-    plots the top specified number of terms
-
-    Inputs
-    ------
-    gene_list: list of genes to perform enrichment on
-    description: string description for title
-    out_dir: output directory
-    top_term: integer, number of top hits to plot
-    figsize: tuple, figure size.  (6,12)
-
-    Returns
-    -------
-
-    None
-
-    '''
-
-    os.makedirs(out_dir, exist_ok=True)
-
-    gseapy.enrichr(figsize=figsize,
-                   top_term=top_term,
-                   gene_list=gene_list,
-                   description='{}_KEGG'.format(description),
-                   gene_sets='KEGG_2016',
-                   outdir=out_dir
-                   )
-
-    gseapy.enrichr(figsize=figsize,
-                   top_term=top_term,
-                   gene_list=gene_list,
-                   description='{}_GO_biological_process'.format(description),
-                   gene_sets='GO_Biological_Process_2017b',
-                   outdir=out_dir
-                   )
-    gseapy.enrichr(figsize=figsize,
-                   top_term=top_term,
-                   gene_list=gene_list,
-                   description='{}_GO_molecular_function'.format(description),
-                   gene_sets='GO_Molecular_Function_2017b',
-                   outdir=out_dir
-                   )
 
 
 def plot_col(df, title, ylabel, out='', xy=(None, None), xticks=[''], plot_type=['violin'], pvalue=False, compare_tags=None):
@@ -996,16 +962,16 @@ def ssh_check(ID, job_folder, prejob_files=None, wait=True, return_filetype=None
     None
 
     '''
-    job_folder = job_folder if job_folder.endswith('/') else f'{job_folder}/'
+    job_folder = val_folder(job_folder)
     jobs_list = os.popen('ssh pegasus bhist -w').read()
     job = [j for j in re.findall(r'ID_(\d+)', jobs_list) if j == ID]
     if len(job) != 0:
-        print('Job ID_{} is not complete: {:%Y-%m-%d %H:%M:%S}'.format(ID, datetime.now()))
+        print(f'Job ID_{ID} is not complete: {datetime.now():%Y-%m-%d %H:%M:%S}')
     else:
         if os.popen('''ssh pegasus "if [ -f {}/*_logs_{}.stderr* ]; then echo 'True' ; fi"'''.format(job_folder, ID)).read() == 'True\n':
-            print('Job ID_{} is finished'.format(ID))
+            print(f'Job ID_{ID} is finished')
         else:
-            print('There was likely an error in submission of Job ID_{}'.format(ID))
+            print(f'There was likely an error in submission of Job ID_{ID}')
 
     if wait:
         running = True
@@ -1015,13 +981,13 @@ def ssh_check(ID, job_folder, prejob_files=None, wait=True, return_filetype=None
             if len(job) == 0:
                 running = False
             else:
-                print('Waiting for jobs to finish... {:%Y-%m-%d %H:%M:%S}'.format(datetime.now()))
+                print(f'Waiting for jobs to finish... {datetime.now():%Y-%m-%d %H:%M:%S}')
                 time.sleep(sleep)
-        print('Job ID_{} is finished'.format(ID))
+        print(f'Job ID_{ID} is finished')
 
     if load:
-        os.makedirs('ssh_files/{}/'.format(ID), exist_ok=True)
-        post_files = os.popen('ssh pegasus ls {}*{}'.format(job_folder, return_filetype)).read().split('\n')[:-1]
+        os.makedirs(f'ssh_files/{ID}/', exist_ok=True)
+        post_files = os.popen(f'ssh pegasus ls {job_folder}*{return_filetype}').read().split("\n")[:-1]
 
         if prejob_files is None:
             prejob_files = []
@@ -1045,7 +1011,7 @@ def ssh_check(ID, job_folder, prejob_files=None, wait=True, return_filetype=None
                     print(file.read())
 
 
-def deeptools(regions, signals, matrix_name, out_name, pegasus_folder, copy=False, title='', bps=(1500, 1500, 4000), type='center', scaled_names=('TSS', 'TES'), make=('matrix', 'heatmap', 'heatmap_group', 'profile', 'profile_group')):
+def deeptools(regions, signals, matrix_name, out_name, pegasus_folder, copy=False, title='', bps=(1500, 1500, 4000), d_type='center', scaled_names=('TSS', 'TES'), make=('matrix', 'heatmap', 'heatmap_group', 'profile', 'profile_group')):
     '''
     Inputs
     ------
@@ -1070,7 +1036,7 @@ def deeptools(regions, signals, matrix_name, out_name, pegasus_folder, copy=Fals
 
     make_lower = [x.lower() for x in make]
 
-    if type.lower() == 'center':
+    if d_type.lower() == 'center':
         deepMat = 'reference-point --referencePoint center'
         deepHeat = "--refPointLabel 'Peak Center'"
         deepProf = "--refPointLabel 'Peak Center'"
