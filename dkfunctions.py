@@ -514,10 +514,10 @@ def overlap_two(bed_dict, genome=None):
         gene_overlaps['{}_unique_genes'.format(names[1])] = Set2_unique - (Set1_unique | Overlap_Set)
         gene_overlaps['Overlap_Gene_Set'] = (Set1_unique & Set2_unique) | Overlap_Set
 
-        # for key, gene_set in gene_overlaps.items():
-        #    out_file = '{}{}{}.txt'.format(Folder,subfolder,key)
-        #    for gene in gene_set:
-        #        print(gene, file=open(out_file, 'a'))
+        for key, gene_set in gene_overlaps.items():
+            with open(f'{Folder}{subfolder}{key}.txt', 'w') as file:
+                for gene in gene_set:
+                    file.write(f'{gene}\n')
 
         for key, item in gene_overlaps.items():
             return_dict[key] = item
@@ -557,7 +557,9 @@ def enrichr(gene_list, description, out_dir, scan=None, max_terms=10, load=False
 
     testscan = {'KEGG': 'KEGG_2016',
                 'GO_biological_process': 'GO_Biological_Process_2017b',
-                'GO_molecular_function': 'GO_Molecular_Function_2017b'
+                'ChIP-X_Consensus_TFs': 'ENCODE_and_ChEA_Consensus_TFs_from_ChIP-X',
+                'ChEA': 'ChEA_2016',
+                'OMIM_Disease': 'OMIM_Disease'
                 }
 
     if isinstance(scan, dict):
@@ -1464,6 +1466,111 @@ def extract_clustermap_clusters(clustermap, num_of_clusters):
     '''
 
     return fcluster(clustermap.dendrogram_row.linkage, num_of_clusters, criterion='maxclust')
+
+
+def generate_ROSE_gffs(bed_file, name):
+    '''
+    takes a bed_file and returns a gff in the format needed for the ROSE algorithm.
+    '''
+    if type(bed_file) is BedTool:
+        bed_file = bed_file.to_dataframe()
+    elif type(bed_file) is not pd.DataFrame:
+        IOError('Input must be either a pybedtools object or a pandas dataframe')
+
+    gff = pd.DataFrame({'chr': bed_file.chrom,
+                        'number': bed_file.index.tolist(),
+                        'b1': '.',
+                        'start': bed_file.start,
+                        'end': bed_file.end,
+                        'b2': '.',
+                        'b3': '.',
+                        'b4': '.',
+                        'id': bed_file.index.tolist()
+                        },
+                       index=bed_file.index)
+
+    gff.to_csv(f'{name}_enhancer.gff', header=False, index=False, sep="\t")
+    return gff
+
+
+def active_enhancer_determination(H3K4me1_bw, H3K4me3_bw, H3K4me1_bed, H3K27ac_bed, name, TSS_bed=None, gtf_file=None, TSS_region=(2500, 2500), chrom_sizes=None):
+    '''
+
+    Input
+    ----------
+    TSS_bed: location of a premade TSS window bed file.  If None, gtf_file, chrom.sizes, and TSS_region must be specified.
+    gtf_file:  if no TSS_bed is provided, location of gtf_file must be included here.
+    TSS_region: if no TSS_bed is provided, specify the distances before and after TSS.
+    chrom: file of chromosome sizes (no header in file)
+    H3K4me1_bw: location of H3K4me1 bigwig file (should be normalized ie. FC over input)
+    H3K4me3_bw: location of H3K4me3 bigwig file (should be normalized ie. FC over input)
+    H3K4me1_bed: peakfile for H3K4me1
+    H3K27ac_bed: peakfile for H2K27ac
+    name: name of the output sample
+
+    Output
+    -----------
+
+    Saves enhancer bed file to disk as well as TSS window bed file if TSS_bed is not provided
+    returns an enhancer bedfile
+
+    '''
+
+    import gtfparse
+    import pyBigWig
+
+    if TSS_bed is None:
+        gtf = gtfparse.read_gtf(gtf_file)
+
+        TSS = gtf[gtf.feature == 'gene'][['seqname', 'start', 'end', 'strand']]
+        TSS['TSS'] = TSS[['start', 'end', 'strand']].apply(lambda x: x[0] if x[2] == '+' else x[1], axis=1)
+
+        TSS_slop = pd.DataFrame({'chr': TSS.seqname,
+                                 'start': TSS.TSS - TSS_region[0],
+                                 'end': TSS.TSS + TSS_region[1]
+                                 },
+                                index=TSS.index)
+
+        low_index = TSS_slop[TSS_slop.start < 0].index
+        TSS_slop.loc[low_index, 'start'] = 0
+
+        chrom = pd.read_csv(chrom_sizes, header=None, index_col=0, sep="\t")[1].to_dict()
+
+        TSS_max = TSS_slop.groupby('chr').end.max().to_dict()
+
+        problem_chroms = []
+        for key, value in TSS_max.items():
+            if value > chrom[key]:
+                problem_chroms.append(key)
+
+        for p_chrom in problem_chroms:
+            idx = TSS_slop[TSS_slop.chr == p_chrom].index
+            TSS_slop.loc[idx, 'end'] = TSS_slop.loc[idx, 'end'].apply(lambda x: x if x < chrom[p_chrom] else chrom[p_chrom])
+
+        TSS_slop.to_csv(f'TSS_{TSS_region[0]}-{TSS_region[1]}.bed', index=False, header=False, sep="\t")
+        TSS = BedTool.from_dataframe(TSS_slop)
+
+    else:
+        TSS = BedTool(TSS_bed)
+
+    K1_bw = pyBigWig.open(H3K4me1_bw)
+    K3_bw = pyBigWig.open(H3K4me3_bw)
+    K1_bed = BedTool(H3K4me1_bed).to_dataframe()
+    K27_bed = BedTool(H3K27ac_bed)
+
+    df = K1_bed
+    df['K4me1_mean'] = df.iloc[:, 0:3].apply(lambda x: K1_bw.stats(x[0], x[1], x[2], type='mean')[0], axis=1)
+    df['K4me3_mean'] = df.iloc[:, 0:3].apply(lambda x: K3_bw.stats(x[0], x[1], x[2], type='mean')[0], axis=1)
+
+    K4me1H_K4me3L = BedTool.from_dataframe(df[df.K4me1_mean > (df.K4me3_mean * 2)])
+
+    enhancers = K27_bed + K4me1H_K4me3L - TSS
+
+    print(f"Number of peaks with 2x more K4me1 than K4me3: {len(K4me1H_K4me3L)}")
+    print(f"Number of enhancers using -{len(TSS_region[0])} to +{len(TSS_region[1])}  window: {len(enhancers)}")
+
+    enhancers.saveas(f'{name}_Enhancers.bed')
+    return enhancers
 
 
 def boxplot_significance(x, y, data, type_test=None, __init__set=None):
