@@ -24,6 +24,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import seaborn as sns
 from scipy import stats
+from scipy.cluster.hierarchy import fcluster
 from IPython.display import Image, display
 
 # Get Current Git Commit Hash for version
@@ -248,8 +249,11 @@ def plot_venn2(Series, string_name_of_overlap, folder):
     plt.savefig(f"{folder}{string_name_of_overlap.replace(' ','_')}-overlap.svg")
     plt.savefig(f"{folder}{string_name_of_overlap.replace(' ','_')}-overlap.png", dpi=300)
 
+    plt.close()
+    image_display(f"{folder}{string_name_of_overlap.replace(' ','_')}-overlap.png")
 
-def plot_venn2_set(dict_of_sets, string_name_of_overlap, folder):
+
+def plot_venn2_set(dict_of_sets, string_name_of_overlap, folder, pvalue=False, total_genes=None):
     '''
     Plots a 2 way venn from a dictionary of sets
     Saves to file.
@@ -300,10 +304,18 @@ def plot_venn2_set(dict_of_sets, string_name_of_overlap, folder):
         circle.set_alpha(0.8)
         circle.set_linewidth(3)
 
+    if None not in [pvalue, total_genes]:
+        intersection_N = len(set_list[0] & set_list[1])
+        pvalue = stats.hypergeom.sf(intersection_N, total_genes, len(set_list[0]), len(set_list[1]))
+        plt.text(0, 0, f'p-value = {pvalue:.03g}', fontsize=10)
+
     plt.title(string_name_of_overlap.replace('_', ' ') + " overlaps")
     plt.tight_layout()
     plt.savefig(f"{folder}{string_name_of_overlap.replace(' ', '_')}-overlap.svg")
     plt.savefig(f"{folder}{string_name_of_overlap.replace(' ', '_')}-overlap.png", dpi=300)
+
+    plt.close()
+    image_display(f"{folder}{string_name_of_overlap.replace(' ', '_')}-overlap.png")
 
 
 def plot_venn3_set(dict_of_sets, string_name_of_overlap, folder):
@@ -363,6 +375,9 @@ def plot_venn3_set(dict_of_sets, string_name_of_overlap, folder):
     plt.savefig(f"{folder}{string_name_of_overlap.replace(' ','_')}-overlap.svg")
     plt.savefig(f"{folder}{string_name_of_overlap.replace(' ','_')}-overlap.png", dpi=300)
 
+    plt.close()
+    image_display(f"{folder}{string_name_of_overlap.replace(' ','_')}-overlap.png")
+
 
 def plot_venn3_counts(element_list, set_labels, string_name_of_overlap, folder):
     '''
@@ -417,6 +432,9 @@ def plot_venn3_counts(element_list, set_labels, string_name_of_overlap, folder):
     plt.savefig(f"{folder}{string_name_of_overlap.replace(' ', '_')}-overlap.svg")
     plt.savefig(f"{folder}{string_name_of_overlap.replace(' ', '_')}-overlap.png", dpi=300)
 
+    plt.close()
+    image_display(f"{folder}{string_name_of_overlap.replace(' ', '_')}-overlap.png")
+
 
 def overlap_two(bed_dict, genome=None):
     '''
@@ -470,6 +488,7 @@ def overlap_two(bed_dict, genome=None):
                '{} and\n{} peak'.format(names[0], names[1]),
                '{}{}'.format(Folder, subfolder)
                )
+
     if bool(genome):
         print('Annotating overlaping peaks...')
         # Annotate with ChIPseeker
@@ -512,7 +531,7 @@ def overlap_two(bed_dict, genome=None):
     return return_dict
 
 
-def enrichr(gene_list, description, out_dir, scan=None, max_terms=10, load=False, figsize=(6, 12)):
+def enrichr(gene_list, description, out_dir, scan=None, max_terms=10, load=False, figsize=(12, 6)):
     '''
     Performs GO Molecular Function, GO Biological Process and KEGG enrichment on a gene list.
     Uses enrichr.
@@ -661,6 +680,9 @@ def splice_bar(data, title, x, y):
     sns.despine()
     sns.utils.plt.savefig('{}.png'.format(title.replace(' ', '_')), dpi=300)
 
+    plt.close()
+    image_display('{}.png'.format(title.replace(' ', '_')))
+
 
 def make_df(dict_of_sets, name):
     '''
@@ -769,6 +791,8 @@ def plot_col(df, title, ylabel, out='', xy=(None, None), xticks=[''], plot_type=
     plt.savefig('{}{}.png'.format(out, title.replace(' ', '_')), dpi=300)
 
     print('{}.png found in {}/'.format(title.replace(' ', '_'), out))
+    plt.close()
+    image_display('{}{}.png'.format(out, title.replace(' ', '_')))
 
 
 def scatter_regression(df, s=150, alpha=0.3, line_color='dimgrey', svg=False, reg_stats=True, point_color='steelblue', title=None,
@@ -848,6 +872,8 @@ def scatter_regression(df, s=150, alpha=0.3, line_color='dimgrey', svg=False, re
     plt.savefig('scatter_regression/{}.png'.format(title.replace(' ', '_')), dpi=300)
 
     print('{}.png found in {}/scatter_regression/'.format(title.replace(' ', '_'), os.getcwd()))
+    plt.close()
+    image_display('scatter_regression/{}.png'.format(title.replace(' ', '_')))
 
 
 def signature_heatmap(vst, sig, name, cluster_columns=False):
@@ -882,9 +908,8 @@ def signature_heatmap(vst, sig, name, cluster_columns=False):
     CM.savefig('{}_Heatmap.png'.format(name.replace(' ', '_')), dpi=300)
     CM.savefig('{}_Heatmap.svg'.format(name.replace(' ', '_')))
 
-
-def image_display(file):
-    display(Image(file))
+    plt.close()
+    image_display('{}_Heatmap.png'.format(name.replace(' ', '_')))
 
 
 def ssh_job(command_list, job_name, job_folder, project='nimerlab', threads=1, q='general', mem=3000):
@@ -915,24 +940,26 @@ def ssh_job(command_list, job_name, job_folder, project='nimerlab', threads=1, q
 
     rand_id = str(random.randint(0, 100000))
     str_comd_list = '\n'.join(command_list)
-    cmd = f'''#!/bin/bash
-
-#BSUB -J ID_{rand_id}_JOB_{job_name.replace(' ','_')}
-#BSUB -R "rusage[mem={mem}]"
-#BSUB -R "span[ptile={threads}]"
-#BSUB -o {job_folder}{job_name.replace(' ','_')}_logs_{rand_id}.stdout.%J
-#BSUB -e {job_folder}{job_name.replace(' ','_')}_logs_{rand_id}.stderr.%J
-#BSUB -W 120:00
-#BSUB -n {threads}
-#BSUB -q {q}
-#BSUB -P {project}
-
-{str_comd_list}'''
+    cmd = '\n'.join['#!/bin/bash',
+                    '',
+                    f"#BSUB -J ID_{rand_id}_JOB_{job_name.replace(' ','_')}",
+                    f'#BSUB -R "rusage[mem={mem}]"',
+                    f'#BSUB -R "span[ptile={threads}]"',
+                    f"#BSUB -o {job_folder}{job_name.replace(' ','_')}_logs_{rand_id}.stdout.%J",
+                    f"#BSUB -e {job_folder}{job_name.replace(' ','_')}_logs_{rand_id}.stderr.%J",
+                    '#BSUB -W 120:00',
+                    f'#BSUB -n {threads}',
+                    f'#BSUB -q {q}',
+                    f'#BSUB -P {project}',
+                    '',
+                    f'{str_comd_list}'
+                    ]
 
     with open(f'{job_name.replace(" ","_")}.sh', 'w') as file:
         file.write(cmd)
 
     prejob_files = os.popen(f'ssh pegasus ls {job_folder}').read().split('\n')[:-1]
+    os.system(f'''ssh pegasus "mkdir -p {job_folder}"''')
     os.system(f'scp {job_name.replace(" ", "_")}.sh pegasus:{job_folder}')
     os.system(f'''ssh pegasus "cd {job_folder}; bsub < {job_name.replace(' ','_')}.sh"''')
     print(f'Submitting {job_name} as ID_{rand_id} from folder {job_folder}: {datetime.now():%Y-%m-%d %H:%M:%S}')
@@ -1124,6 +1151,8 @@ def order_cluster(dict_set, df, gene_column_name):
     clustermap.ax_heatmap.legend(handles=legend, bbox_to_anchor=(-.1, .9, 0., .102))
 
     clustermap.savefig(f'{name}.png', dpi=300)
+    plt.close()
+    image_display(f'{name}.png')
 
     return out_list, ordered_df, clustermap
 
@@ -1156,6 +1185,10 @@ def ranked_ordered_cluster(dict_set, in_df, gene_column_name, dict_sort_col, asc
 
     legend = [mpatches.Patch(color=color, label=label.replace('_', ' ')) for label, color in color_mapping.items() if label != 'NA']
     clustermap.ax_heatmap.legend(handles=legend, bbox_to_anchor=(-.1, .9, 0., .102))
+    clustermap.savefig('ranked_ordered_cluster.png')
+
+    plt.close()
+    image_display('ranked_ordered_cluster.png')
 
     return out_list, ordered_df, clustermap
 
@@ -1207,6 +1240,7 @@ def gsea_barplot(out_dir, pos_file, neg_file, gmt_name, max_number=20):
     file = f'{out_dir}{gmt_name}_GSEA_NES_plot.png'
     fig.savefig(file, dpi=300)
     plt.close()
+    image_display(file)
 
     return file
 
@@ -1251,6 +1285,8 @@ def hinton(df, filename, folder, max_weight=None):
     ax.annotate('Hinton Plot of Independent Components', xy=(.14, 1), xycoords='axes fraction', size=20)
     ax.invert_yaxis()
     ax.figure.savefig(f'{folder}{filename}.png')
+    plt.close()
+    image_display(f'{folder}{filename}.png')
 
 
 def genomic_annotation_plots(dict_of_annotated_dfs, txdb_db, filename='Genomic_Annotation_Plot', bar_width=.75, figsize=(10, 5)):
@@ -1280,6 +1316,8 @@ def genomic_annotation_plots(dict_of_annotated_dfs, txdb_db, filename='Genomic_A
     sns.despine()
     plt.tight_layout()
     plt.savefig(f'{filename}.png', dpi=300)
+    plt.close()
+    image_display(f'{filename}.png')
 
 
 def extract_AQUAS_report_data(base_folder, out_folder='', histone=False, replicate=False):
@@ -1413,6 +1451,116 @@ def overlap_four(bed_dict, genome=None):
             pickle.dump(return_dict, fp)
 
     return sorted_dict if genome is None else {**sorted_dict, **return_dict}
+
+
+def extract_clustermap_clusters(clustermap, num_of_clusters):
+
+    '''
+    Input a seaborn clustermap and number of clusters to id
+
+    Returns an array of labelled clusters based on the original dataframe used to generate the clustermap.
+
+    Usage: df['cluster'] = extract_clutsermap_clusters(clustermap, 2)
+    '''
+
+    return fcluster(clustermap.dendrogram_row.linkage, num_of_clusters, criterion='maxclust')
+
+
+def boxplot_significance(x, y, data, type_test=None, __init__set=None):
+
+    from decimal import Decimal
+    from scipy.stats import ttest_ind, ks_2samp
+
+    group_amount = data[x].unique()
+    # min_value = np.min(data.groupby(x)[y].min().values)
+    iqr = data.groupby(x)[y].describe()['75%'] - data.groupby(x)[y].describe()['25%']
+    min_q1 = data.groupby(x)[y].describe()['25%'] - (1.5 * iqr)
+    max_q3 = data.groupby(x)[y].describe()['75%'] + (1.5 * iqr)
+    group_to_stats = data.groupby(x)
+
+    n_min_q1 = np.min(min_q1.values)
+    n_max_q3 = np.max(max_q3.values)
+
+    perncentage_add = (n_max_q3 - n_min_q1) * 0.1
+    print(perncentage_add, 'percent')
+    print(group_amount)
+    groups = {}
+    if __init__set is not None:
+        group_number = {g: (-0.25 + (0.5 * n)) + __init__set for n, g in enumerate(group_amount)}
+    else:
+        group_number = {g: n for n, g in enumerate(group_amount)}
+
+    stack_lines = 1
+    for g in group_amount:
+        for i in group_amount:
+            if g != i:
+                if g + ':' + i not in groups and i + ':' + g not in groups:
+
+                    print(g, i)
+                    groups[g + ':' + i] = 0
+                    n_g, n_i = group_number[g], group_number[i]
+
+                    stack_value_plot = (perncentage_add) * stack_lines
+                    print(stack_value_plot)
+                    print('min_q1', n_min_q1)
+                    plt.plot([n_g, n_i], [n_min_q1 - stack_value_plot, n_min_q1 - stack_value_plot], color='black')  # add the percentage
+
+                    g_wo_na = group_to_stats.get_group(g)[y].dropna()
+                    i_wo_na = group_to_stats.get_group(i)[y].dropna()
+
+                    if type_test == 'ttest':
+                        print(g_wo_na.median())
+                        print(i_wo_na.median())
+                        print('=' * 20)
+                        test = ttest_ind(g_wo_na, i_wo_na)[1]
+                    elif type_test == 'ks':
+
+                        test = ks_2samp(g_wo_na, i_wo_na)[1]
+                    else:
+                        print('Please, enter  "ttest" or "ks" ')
+
+                    print(n_i, n_g, test)
+
+                    if test < 0.05:
+                        sig_color = 'red'
+                    else:
+                        sig_color = 'black'
+
+                    plt.text(((n_i - n_g) / 4) + n_g, n_min_q1 - (stack_value_plot * 0.9), '%.2E' % Decimal(test), color=sig_color)
+
+                    stack_lines += 1
+
+    plt.ylim(n_min_q1 - (perncentage_add * stack_lines), n_max_q3 + (perncentage_add))
+
+
+def boxplot_significance_hue(x, y, hue, data, type_test=None):
+    '''
+    ################################################USAGE EXAMPLES##############################################
+    # x,y boxplot
+    sns.boxplot(x='rna_ratio_shift_groups',
+                y='crt_mean',
+                data=df_short_long_remove_inf, fliersize=0)
+
+    boxplot_significance(x='rna_ratio_shift_groups',
+                         y='crt_mean',
+                         data=df_short_long_remove_inf, type_test='ttest')
+
+    # x,y and  hue  boxplot
+
+    sns.boxplot(x='rna_ratio_shift_groups',
+                y='pause_index',
+                hue='group',   # hue cagegory
+                data=df_concat_pausebox,
+                fliersize=0 )
+    boxplot_significance_hue(x='rna_ratio_shift_groups', y='pause_index', hue='group', data=df_concat_pausebox, type_test='ttest' )
+    '''
+
+    data_hue = data.groupby(x)
+
+    for e in enumerate(data_hue):
+        k, d_h = e[1]
+        n_loop = e[0]
+        boxplot_significance(hue, y, d_h, type_test=type_test, __init__set=n_loop)
 
 
 '''
