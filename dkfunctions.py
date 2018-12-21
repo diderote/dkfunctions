@@ -942,20 +942,20 @@ def ssh_job(command_list, job_name, job_folder, project='nimerlab', threads=1, q
 
     rand_id = str(random.randint(0, 100000))
     str_comd_list = '\n'.join(command_list)
-    cmd = '\n'.join['#!/bin/bash',
-                    '',
-                    f"#BSUB -J ID_{rand_id}_JOB_{job_name.replace(' ','_')}",
-                    f'#BSUB -R "rusage[mem={mem}]"',
-                    f'#BSUB -R "span[ptile={threads}]"',
-                    f"#BSUB -o {job_folder}{job_name.replace(' ','_')}_logs_{rand_id}.stdout.%J",
-                    f"#BSUB -e {job_folder}{job_name.replace(' ','_')}_logs_{rand_id}.stderr.%J",
-                    '#BSUB -W 120:00',
-                    f'#BSUB -n {threads}',
-                    f'#BSUB -q {q}',
-                    f'#BSUB -P {project}',
-                    '',
-                    f'{str_comd_list}'
-                    ]
+    cmd = '\n'.join(['#!/bin/bash',
+                     '',
+                     f"#BSUB -J ID_{rand_id}_JOB_{job_name.replace(' ','_')}",
+                     f'#BSUB -R "rusage[mem={mem}]"',
+                     f'#BSUB -R "span[ptile={threads}]"',
+                     f"#BSUB -o {job_folder}{job_name.replace(' ','_')}_logs_{rand_id}.stdout.%J",
+                     f"#BSUB -e {job_folder}{job_name.replace(' ','_')}_logs_{rand_id}.stderr.%J",
+                     '#BSUB -W 120:00',
+                     f'#BSUB -n {threads}',
+                     f'#BSUB -q {q}',
+                     f'#BSUB -P {project}',
+                     '',
+                     f'{str_comd_list}'
+                     ])
 
     with open(f'{job_name.replace(" ","_")}.sh', 'w') as file:
         file.write(cmd)
