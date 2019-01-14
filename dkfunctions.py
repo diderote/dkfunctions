@@ -246,11 +246,12 @@ def plot_venn2(Series, string_name_of_overlap, folder):
 
     plt.title(string_name_of_overlap.replace('_', ' ') + " overlaps")
     plt.tight_layout()
-    plt.savefig(f"{folder}{string_name_of_overlap.replace(' ','_')}-overlap.svg")
-    plt.savefig(f"{folder}{string_name_of_overlap.replace(' ','_')}-overlap.png", dpi=300)
-
+    name = string_name_of_overlap.replace('_', ' ').replace('\n', '_')
+    plt.savefig(f"{folder}{name}-overlap.svg")
+    plt.savefig(f"{folder}{name}-overlap.png", dpi=300)
     plt.close()
-    image_display(f"{folder}{string_name_of_overlap.replace(' ','_')}-overlap.png")
+
+    image_display(f"{folder}{name}-overlap.png")
 
 
 def plot_venn2_set(dict_of_sets, string_name_of_overlap, folder, pvalue=False, total_genes=None):
@@ -1363,6 +1364,19 @@ def extract_AQUAS_report_data(base_folder, out_folder='', histone=False, replica
         plot_col(results_df.loc[index], out=out_folder, title=f'{index}', ylabel=index.replace('_', ' '), plot_type=['violin', 'swarm'])
 
     return results_df
+
+
+def meme_ssh(folder, fasta, bed, meme_db, out_name):
+    folder = folder if folder.endswith('/') else f'{folder}/'
+    out_fasta = f'{folder}{bed.split("/")[-1].replace(".bed",".fasta")}'
+
+    meme_cmd = ['module rm python share-rpms65',
+                'source activate motif',
+                f'bedtools getfasta -fi {fasta} -bed {bed} -fo {out_fasta}',
+                f'meme-chip -oc {out_name} -db {meme_db} -dna {out_fasta}'
+                ]
+
+    return ssh_job(meme_cmd, f'{out_name}_meme', folder, mem=3000)
 
 
 def overlap_four(bed_dict, genome=None):
