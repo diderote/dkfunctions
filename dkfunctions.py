@@ -9,7 +9,7 @@ import random
 from datetime import datetime
 import time
 import pickle
-from math import floor, log10
+# from math import floor, log10
 
 from pybedtools import BedTool
 import pandas as pd
