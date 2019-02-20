@@ -26,6 +26,7 @@ import seaborn as sns
 from scipy import stats
 from scipy.cluster.hierarchy import fcluster
 from IPython.display import Image, display
+from tqdm import tqdm_notebook, tqdm
 
 # Get Current Git Commit Hash for version
 path = [x.replace(' ', r'\ ') for x in os.popen('echo $PYTHONPATH').read().split(':') if 'dkfunctions' in x.split('/')]
@@ -74,6 +75,82 @@ def alert_me(text):
     os.system(f'''osascript -e 'tell Application "System Events" to display dialog "{text}"' ''')
 
 
+def tq_type():
+    jupyter = True if os.environ['_'].endswith('jupyter') else False
+    return tqdm_notebook if jupyter else tqdm
+
+
+def peak_overlap_MC(df_dict, background, permutations=1000, seed=42):
+    '''
+    Monte Carlo simulation of peak overlaps in a given background
+    pvalue calucated as liklihood over emperical random background overlap of shuffled peaks per chromosome.
+
+    Inputs
+    ------
+    df_dict:  dictinoary of dataframes in bed format
+    background genome space:  bed format file of background genome space
+    permutations:  number of permutations
+    seed: random seed
+    notebook: whether or not running in a jupyter notebook (for tqdm)
+
+    Returns
+    -------
+    pvalue
+    '''
+    np.random.seed(seed)
+    tq = tq_type()
+
+    background_bed = BedTool(background)
+
+    # generate probability of chosing a chromosome region based on its size
+    bregions = background_bed.to_dataframe()
+    bregions['Size'] = bregions.iloc[:, 2] - bregions.iloc[:, 1]
+    total_size = bregions.Size.sum()
+    bregions['fraction'] = bregions.Size / total_size
+
+    bed_dict = {name: df.copy() for name, df in df_dict.items()}
+
+    # determine length of each peak region
+    for df in bed_dict.values():
+        df['Length'] = df.iloc[:, 2] - df.iloc[:, 1]
+
+    # determine baseline overlap intersect count of preshuffled peaks.
+    A, B = bed_dict.values()
+
+    overlap = len(BedTool.from_dataframe(A).sort().merge() + BedTool.from_dataframe(B).sort().merge())
+
+    results = []
+
+    for permutation in tq(range(permutations)):
+        for df in bed_dict.values():
+            # randomly pick a region in the background based on size distribution of the regions
+            regions = [np.random.choice(bregions.index.tolist(), p=bregions.fraction) for x in range(len(df))]
+            lengths = df.Length.tolist()
+
+            # assign the chromosome
+            df.iloc[:, 0] = [bregions.iloc[x, 0] for x in regions]
+
+            # randomly pick a start within the selected background region within the peak size constraints
+            df.iloc[:, 1] = [np.random.randint(bregions.iloc[reg, 1], bregions.iloc[reg, 2] - length) for length, reg in zip(lengths, regions)]
+
+            # assign end based on peak length
+            df.iloc[:, 2] = df.iloc[:, 1] + df.Length
+
+        new_overlap = len(BedTool.from_dataframe(A).sort().merge() + BedTool.from_dataframe(B).sort().merge())
+
+        results.append(1 if new_overlap >= overlap else 0)
+
+    p = (sum(results) + 1) / (len(results) + 1)
+
+    A_name, B_name = df_dict.keys()
+
+    print(f'Number of intersected peaks of {A_name} and {B_name}:  {overlap}')
+    print(f'Number of times simulated intersections exceeded or equaled the actual overlap: {sum(results)}')
+    print(f'Monte Carlo p-value estimate: {p}')
+
+    return p
+
+
 def annotate_peaks(dict_of_dfs, folder, genome, db='UCSC', check=False):
     '''
     Annotate a dictionary of dataframes from bed files to the genome using ChIPseeker and Ensembl annotations.
@@ -92,6 +169,8 @@ def annotate_peaks(dict_of_dfs, folder, genome, db='UCSC', check=False):
 
     '''
     pandas2ri.activate()
+
+    tq = tq_type()
 
     ri.set_writeconsole_regular(rout_write)
     ri.set_writeconsole_warnerror(rout_write)
@@ -128,7 +207,7 @@ def annotate_peaks(dict_of_dfs, folder, genome, db='UCSC', check=False):
     return_dict = {}
 
     print('Annotating Peaks...')
-    for key, df in dict_of_dfs.items():
+    for key, df in tq(dict_of_dfs.items()):
         if check & check_df[key]:
             return_dict[f'{key}_annotated'] = pd.from_csv(f'{folder}{key.replace(" ","_")}_annotated.txt', index_col=0, header=0, sep="\t")
         else:
@@ -555,6 +634,7 @@ def enrichr(gene_list, description, out_dir, scan=None, max_terms=10, load=False
     '''
 
     out_dir = val_folder(out_dir)
+    tq = tq_type()
 
     testscan = {'KEGG': 'KEGG_2016',
                 'GO_biological_process': 'GO_Biological_Process_2017b',
@@ -566,7 +646,7 @@ def enrichr(gene_list, description, out_dir, scan=None, max_terms=10, load=False
     if isinstance(scan, dict):
         testscan = {**testscan, **scan}
 
-    for nick, name in testscan.items():
+    for nick, name in tq(testscan.items()):
         gseapy.enrichr(gene_list=gene_list,
                        figsize=figsize,
                        top_term=max_terms,
@@ -1122,40 +1202,65 @@ def deeptools(regions, signals, matrix_name, out_name, pegasus_folder, copy=Fals
     return cmd_list
 
 
-def order_cluster(dict_set, df, gene_column_name):
+def order_cluster(dict_set, count_df, gene_column_name, title):
+    '''
+    Inputs
+    ------
+    dict_set: a dictary with a cluster name and a set of genes in that cluster for plotting (should be non-overlapping).
+    df: a pandas dataframe with the normalized counts for each gene and samples (or average of samples) in row columns.
+              should also contain a column with the gene name.
+    gene_column_name: the pandas column specifying the gene name (used in the dict_set)
+    title: title for the plot and for saving the file
+
+    Returns
+    ------
+    (Ordered Index List, Ordered Count DataFrame, Clustermap)
+
+    '''
     from scipy.cluster import hierarchy
 
     out_list = []
+    df = count_df.copy()
     df['group'] = 'NA'
 
     for name, genes in dict_set.items():
+        if len(genes) == 0:
+            print(f'There are not genes in {name}. Skipping Group')
+            continue
         reduced_df = df[df[gene_column_name].isin(genes)]
         linkage = hierarchy.linkage(reduced_df.drop(columns=[gene_column_name, 'group']), method='ward', metric='euclidean')
         order = hierarchy.dendrogram(linkage, no_plot=True, color_threshold=-np.inf)['leaves']
         gene_list = reduced_df.iloc[order][gene_column_name].tolist()
-        out_list += gene_list
+        gene_index = df[df.gene_name.isin(gene_list)].index.tolist()
+        out_list += gene_index
 
-        gene_symbol = [gene.split('_') for gene in gene_list]
+        gene_symbol = [gene.split('_')[-1] for gene in gene_list]
         with open(f'{name}_genes.txt', 'w') as file:
             for gene in gene_symbol:
                     file.write(f'{gene}\n')
 
-        df.loc[gene_list, 'group'] = name
+        df.loc[gene_index, 'group'] = name
 
     ordered_df = df.loc[out_list]
-    color_mapping = dict(zip(df.group.unique(), sns.hls_palette(len(df.group.unique()), s=.7)))
+    color_mapping = dict(zip([name for name, genes in dict_set.items() if len(genes) > 0], sns.hls_palette(len(df.group.unique()), s=.7)))
     row_colors = df.group.map(color_mapping)
 
     sns.set(context='notebook', font='Arial', palette='RdBu_r', style='white', rc={'figure.dpi': 300})
-    clustermap = sns.clustermap(ordered_df.loc[out_list].drop(columns=[gene_column_name, 'group']), z_score=0, row_colors=row_colors, row_cluster=False, col_cluster=False, cmap='RdBu_r', yticklabels=False)
-    name = '_'.join(list(dict_set.keys()))
+    clustermap = sns.clustermap(ordered_df.loc[out_list].drop(columns=[gene_column_name, 'group']),
+                                z_score=0,
+                                row_colors=row_colors,
+                                row_cluster=False,
+                                col_cluster=False,
+                                cmap='RdBu_r',
+                                yticklabels=False)
+    clustermap.fig.suptitle(title)
 
     legend = [mpatches.Patch(color=color, label=label.replace('_', ' ')) for label, color in color_mapping.items() if label != 'NA']
     clustermap.ax_heatmap.legend(handles=legend, bbox_to_anchor=(-.1, .9, 0., .102))
 
-    clustermap.savefig(f'{name}.png', dpi=300)
+    clustermap.savefig(f'{title.replace(" ","_")}.png', dpi=300)
     plt.close()
-    image_display(f'{name}.png')
+    image_display(f'{title.replace(" ","_")}.png')
 
     return out_list, ordered_df, clustermap
 
@@ -1323,11 +1428,12 @@ def genomic_annotation_plots(dict_of_annotated_dfs, txdb_db, filename='Genomic_A
     image_display(f'{filename}.png')
 
 
-def extract_AQUAS_report_data(base_folder, out_folder='', histone=False, replicate=False):
+def extract_ENCODE_report_data(base_folder, report_type, out_folder='', histone=False, replicate=False):
     '''
     Inputs
     -----
     base_folder:  AQUAS results folder.  Will use subfolders for sample name and look for report in those subfolders.
+    report_type: 'AQUAS' or 'cromwell'
     replicate: Whether the ChIPseq was performed as a repliate or not.
 
     Returns
@@ -1335,32 +1441,40 @@ def extract_AQUAS_report_data(base_folder, out_folder='', histone=False, replica
     DataFrame of results
     '''
 
-    reports = glob.glob(f'{base_folder}/*/*report.html')
-    out_folder = val_folder(out_folder)
+    tq = tq_type()
+
+    if report_type.lower() not in ['aquas', 'cromwell']:
+        raise ValueError('This function only extracts summary info from AQUAS or Cromwell generated qc reports.')
+
     base_folder = val_folder(base_folder)
+    report_name = f'{base_folder}*/*report.html' if report_type.lower() == 'aquas' else f'{base_folder}*/cromwell-executions/chip/*/call-qc_report/execution/qc.html'
+
+    reports = glob.glob(report_name)
+    out_folder = val_folder(out_folder)
 
     if replicate is True:
         raise AssertionError('Not set up for replicates yet.')
 
-    results_df = pd.DataFrame(index=['Percent_mapped', 'Mapped_Reads', 'Fraction_Duplicated', 'S_JS_Distance', 'PBC1', 'RSC', 'Raw_Peak_Number', 'N_optimal_overlap_peaks', 'FrIP_IDR', 'N_IDR_peaks'])
-    for file in reports:
-        name = re.findall(r'.*/(.*)_report.html', file)[0]
+    results_df = pd.DataFrame(index=['Percent_mapped', 'Filtered_Uniquely_Mapped_Reads', 'Fraction_Duplicated', 'S_JS_Distance', 'PBC1', 'RSC', 'Overlap_Optimal_Peak_Number', 'FrIP_IDR', 'IDR_Peak_Number'])
+
+    for file in tq(reports):
+        name = re.findall(r'.*/(.*)_report.html', file)[0] if report_type.lower() == 'aquas' else re.findall(r'.*/(.*)/cromwell-executions', file)[0]
         report = pd.read_html(file)
         series = pd.Series()
-        series['Percent_mapped'] = report[1].iloc[7, 1]
-        series['Mapped_Reads'] = report[2].iloc[5, 1]
-        series['Fraction_Duplicated'] = report[3].iloc[7, 1]
-        series['S_JS_Distance'] = report[4].iloc[7, 1]
-        series['PBC1'] = report[5].iloc[6, 1]
-        series['RSC'] = report[6].iloc[8, 1]
-        series['Raw_Peak_Number'] = report[7].iloc[0, 1]
-        series['N_optimal_overlap_peaks'] = report[10].iloc[4, 1]
+        series['Percent_mapped'] = report[1].iloc[7, 1] if report_type.lower() == 'aquas' else report[0].iloc[7, 1]
+        series['Filtered_Uniquely_Mapped_Reads'] = report[2].iloc[5, 1] if report_type.lower() == 'aquas' else  report[3].iloc[5,1]
+        series['Fraction_Duplicated'] = report[3].iloc[7, 1] if report_type.lower() == 'aquas' else report[1].iloc[7, 1]
+        series['S_JS_Distance'] = report[4].iloc[7, 1] if report_type.lower() == 'aquas' else report[8].iloc[8, 1]
+        series['PBC1'] = report[5].iloc[6, 1] if report_type.lower() == 'aquas' else report[2].iloc[6, 1]
+        series['RSC'] = report[6].iloc[8, 1] if report_type.lower() == 'aquas' else report[5].iloc[9, 1]
+        series['Overlap_Optimal_Peak_Number'] = report[10].iloc[4, 1] if report_type.lower() == 'aquas' else report[4].iloc[4, 1]
+
         if histone is False:
-            series['FrIP_IDR'] = report[11].iloc[0, 1]
-            series['N_IDR_peaks'] = report[12].iloc[4, 1]
+            series['FrIP_IDR'] = report[11].iloc[0, 1] if report_type.lower() == 'aquas' else report[7].iloc[1,1]
+            series['IDR_Peak_Number'] = report[12].iloc[4, 1] if report_type.lower() == 'aquas' else report[4].iloc[4, 2]
         results_df[name] = series
 
-    for index in results_df.index.tolist():
+    for index in tq(results_df.index.tolist()):
         plot_col(results_df.loc[index], out=out_folder, title=f'{index}', ylabel=index.replace('_', ' '), plot_type=['violin', 'swarm'])
 
     return results_df
