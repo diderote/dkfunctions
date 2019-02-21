@@ -80,7 +80,7 @@ def tq_type():
     return tqdm_notebook if jupyter else tqdm
 
 
-def peak_overlap_MC(df_dict, background, permutations=1000, seed=42):
+def peak_overlap_MC(df_dict, background, permutations=1000, seed=42, notebook=True):
     '''
     Monte Carlo simulation of peak overlaps in a given background
     pvalue calucated as liklihood over emperical random background overlap of shuffled peaks per chromosome.
@@ -88,22 +88,21 @@ def peak_overlap_MC(df_dict, background, permutations=1000, seed=42):
     Inputs
     ------
     df_dict:  dictinoary of dataframes in bed format
-    background genome space:  bed format file of background genome space
+    background genome space:  pybedtool bed of background genome space
     permutations:  number of permutations
     seed: random seed
-    notebook: whether or not running in a jupyter notebook (for tqdm)
 
     Returns
     -------
     pvalue
     '''
+
     np.random.seed(seed)
     tq = tq_type()
 
-    background_bed = BedTool(background)
-
     # generate probability of chosing a chromosome region based on its size
-    bregions = background_bed.to_dataframe()
+    bregions = background.to_dataframe()
+    bregions.index = range(len(bregions))
     bregions['Size'] = bregions.iloc[:, 2] - bregions.iloc[:, 1]
     total_size = bregions.Size.sum()
     bregions['fraction'] = bregions.Size / total_size
@@ -124,8 +123,27 @@ def peak_overlap_MC(df_dict, background, permutations=1000, seed=42):
     for permutation in tq(range(permutations)):
         for df in bed_dict.values():
             # randomly pick a region in the background based on size distribution of the regions
-            regions = [np.random.choice(bregions.index.tolist(), p=bregions.fraction) for x in range(len(df))]
+            index_list = bregions.index.tolist()
+            df_size = len(df)
+            bregions_fraction = bregions.fraction
+
+            first_pick = np.random.choice(index_list, size=df_size, p=bregions_fraction)
             lengths = df.Length.tolist()
+            alternatives = np.random.choice(index_list, size=df_size, p=bregions_fraction)
+
+            # repick regions if the peak length is larger than the region size (this part can be optimized)
+            regions = []
+            new_pick = 0
+            for reg, length in zip(first_pick, lengths):
+                reg_length = bregions.iloc[reg, 2] - bregions.iloc[reg, 1]
+                if reg_length > length:
+                    regions.append(reg)
+                else:
+                    while reg_length <= length:
+                        new_reg = alternatives[new_pick]
+                        reg_length = bregions.iloc[new_reg, 2] - bregions.iloc[new_reg, 1]
+                        new_pick += 1
+                    regions.append(new_reg)
 
             # assign the chromosome
             df.iloc[:, 0] = [bregions.iloc[x, 0] for x in regions]
