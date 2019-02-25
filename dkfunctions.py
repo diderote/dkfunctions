@@ -84,14 +84,12 @@ def peak_overlap_MC(df_dict, background, permutations=1000, seed=42, notebook=Tr
     '''
     Monte Carlo simulation of peak overlaps in a given background
     pvalue calucated as liklihood over emperical random background overlap of shuffled peaks per chromosome.
-
     Inputs
     ------
     df_dict:  dictinoary of dataframes in bed format
     background genome space:  pybedtool bed of background genome space
     permutations:  number of permutations
     seed: random seed
-
     Returns
     -------
     pvalue
@@ -169,10 +167,122 @@ def peak_overlap_MC(df_dict, background, permutations=1000, seed=42, notebook=Tr
     return p
 
 
+def gsea_dotplot(df_dict, name='', qthresh=0.05, gene_sets=[], dotsize_factor=4, figsize=(4, 10), out_dir='.'):
+    '''
+    Makes a dotplot of GSEA results with the dot size as the percent of genes in the leading edge and the color the NES.
+    Plots only significant dots at given fdr theshold
+
+    Inputs
+    ------
+    df_dict: dictionary of named GSEA results for the analysis. pandas df of gsea_report.xls (use pd.concat to combine pos and neg enrichments)
+    name:  name used for title and filename
+    qthresh: qvalue theshold for includsion
+    pgene_sets:  list of gene sets to plot.  If empty, will plot all with FDR q value < 0.05
+    dot_size_factor:  scale to increase dot size for leading edge %
+    out_dir: output directory
+    '''
+
+    out_dir = out_dir if out_dir.endswith('/') else f'{out_dir}/'
+
+    index = []
+
+    # get leading edge percentages
+    for df in df_dict.values():
+        if 'NAME' in df.columns.tolist():
+            df.index = df.NAME
+        df['le_tags'] = df['LEADING EDGE'].apply(lambda x: x.split('%')[0].split('=')[-1])
+        df.sort_values(by='NES', ascending=False, inplace=True)
+        index += df[df['FDR q-val'] < 0.05].index.tolist()
+
+    index = list(set(index))
+
+    # use gene_sets if provided
+    if len(gene_sets > 0):
+        index = gene_sets
+
+    # make master df
+    data_df = pd.DataFrame()
+    for name, df in df_dict.items():
+        df['sample_name'] = name
+        data_df = pd.concat([data_df, df.loc[index]])
+
+    # reindex
+    data_df['GS_NAME'] = data_df.index
+    data_df.index = range(len(data_df))
+
+    # make x coordinate
+    samples = data_df.name.unique()
+    sample_number = len(samples)
+    sample_x = {name: (x + .5) for name, x in zip(samples, range(sample_number))}
+    data_df['x'] = data_df.name.map(sample_x)
+
+    # make y coordinate
+    gene_set = list(index[::-1])
+    gene_set_number = len(gene_set)
+    sample_y = {name: y for name, y in zip(gene_set, range(gene_set_number))}
+    data_df['y'] = data_df.GS_NAME.map(sample_y)
+
+    # filter for significance and make dot size from leading edge percentage
+    data_df['sig_tags'] = data_df[['FDR q-val', 'le_tags']].apply(lambda x: 0 if float(x[0]) > qthresh else float(x[1]), axis=1)
+    data_df['area'] = data_df['sig_tags'] * dotsize_factor
+
+    # plot
+    plt.clf()
+    sns.set(context='paper', style='white', font='Arial', rc={'figure.dpi': 300})
+
+    fig, ax = plt.subplots(figsize=figsize)
+    sc = ax.scatter(x=data_df.x, y=data_df.y, s=data_df.area, edgecolors='face', c=data_df.NES, cmap='RdBu_r')
+
+    # format y axis
+    ax.yaxis.set_major_locator(plt.FixedLocator(data_df.y))
+    ax.yaxis.set_major_formatter(plt.FixedFormatter(data_df.GS_NAME))
+    ax.set_yticklabels(data_df.GS_NAME.apply(lambda x: x.replace('_', ' ')), fontsize=16)
+
+    # format x axis
+    ax.set_xlim(0, sample_number)
+    ax.xaxis.set_major_locator(plt.FixedLocator(data_df.x))
+    ax.xaxis.set_major_formatter(plt.FixedFormatter(data_df.name))
+    ax.set_xticklabels(data_df.sample_name, fontsize=16, rotation=45)
+
+    # add colorbar
+    cax = fig.add_axes([0.95, 0.20, 0.03, 0.22])
+    cbar = fig.colorbar(sc, cax=cax,)
+    cbar.ax.tick_params(right=True)
+    cbar.ax.set_title('NES', loc='left', fontsize=12)
+    cbar.ax.tick_params(labelsize=10)
+
+    # add legend
+    markers = []
+    max_value = np.max(data_df.sig_tags)
+    rounded_max = int(10 * round((max_value + 5) / 10))  # rounds up to nearest ten (ie 61 --> 70)
+    sizes = [x for x in range(10, rounded_max + 1, 10)]
+    for size in sizes:
+        markers.append(ax.scatter([], [], s=size * dotsize_factor, c='k'))
+    legend = ax.legend(markers, sizes, prop={'size': 12})
+    legend.set_title('Leading Edge (%)', prop={'size': 12})
+
+    # offset legend
+    bb = legend.get_bbox_to_anchor().inverse_transformed(ax.transAxes)
+    xOffset = .5
+    yOffset = -.4
+    bb.x0 += xOffset
+    bb.x1 += xOffset
+    bb.y0 += yOffset
+    bb.y1 += yOffset
+    legend.set_bbox_to_anchor(bb, transform=ax.transAxes)
+
+    # set title
+    ax.set_title(name.replace('_', ' '), fontsize=20)
+
+    sns.despine()
+
+    fig.savefig(f'{out_dir}{name.replace(" ", "_")}.png', bbox_inches='tight')
+    fig.savefig(f'{out_dir}{name.replace(" ", "_")}.svg', bbox_inches='tight')
+
+
 def annotate_peaks(dict_of_dfs, folder, genome, db='UCSC', check=False):
     '''
     Annotate a dictionary of dataframes from bed files to the genome using ChIPseeker and Ensembl annotations.
-
     Inputs
     ------
     dict_of_beds: dictionary of bed files
@@ -180,11 +290,9 @@ def annotate_peaks(dict_of_dfs, folder, genome, db='UCSC', check=False):
     genome: hg38, hg19, mm10
     db: default UCSC, but can also accept Ensembl
     check: bool. checks whether annotation file already exists
-
     Returns
     -------
     dictionary of annotated bed files as dataframe
-
     '''
     pandas2ri.activate()
 
@@ -243,33 +351,26 @@ def annotate_peaks(dict_of_dfs, folder, genome, db='UCSC', check=False):
 def plot_peak_genomic_annotation(dict_of_df, folder, genome):
     '''
     Plots genomic annotation graphs.
-
     Inputs
     ------
     dict_of_df: dictionary of dataframes of bed type data
     folder: output folder
-
     Returns
     -------
     NoneType
-
     '''
     pandas2ri.activate()
     ri.set_writeconsole_regular(rout_write)
     ri.set_writeconsole_warnerror(rout_write)
-
     species = ('Mmusculus' if genome.lower() == 'mm10' else 'Hsapiens')
-
     TxDb = importr('TxDb.{}.UCSC.{}.knownGene'.format(species, genome.lower()))
     txdb = ro.r('txdb <- TxDb.{}.UCSC.{}.knownGene'.format(species, genome.lower()))
-
     if genome.lower() == 'mm10':
         annoDb = importr('org.Mm.eg.db')
         anno = 'org.Mm.eg.db'
     elif genome.lower() == 'hg38' or genome.lower() == 'hg19':
         annoDb = importr('org.Hs.eg.db')
         anno = 'org.Hs.eg.db'
-
     chipseeker = ro.packages.importr('ChIPseeker')
     grdevices = ro.packages.importr('grDevices')
     annotatePeak = ro.r('annotatePeak')
@@ -279,10 +380,8 @@ def plot_peak_genomic_annotation(dict_of_df, folder, genome):
     lapply= ro.r('lapply')
     upsetplot = ro.r('upsetplot')
     plot = ro.r('plot')
-
     out = folder + 'all_peak_annotation'
     os.makedirs(out, exist_ok=True)
-
     GR={}
     GR_anno={}
     for key, df in dict_of_df.items():
@@ -290,15 +389,12 @@ def plot_peak_genomic_annotation(dict_of_df, folder, genome):
         df.columns = ["chr","start","end"] + list(range(col_len - 3))
         GR[key] = makeGR(df)
         GR_anno[key] = chipseeker.annotatePeak(GR[key], overlap='all', TxDb=txdb, annoDb="org.Hs.eg.db")
-
         grdevices.png(file='{}/{}_annoBar.png'.format(out,key.replace(' ','_')), width=512, height=256)
         plot(chipseeker.plotAnnoBar(GR_anno[key]))
         grdevices.dev_off()
-
         grdevices.png(file='{}/{}_TSS_Bar.png'.format(out,key.replace(' ','_')), width=512, height=256)
         plot(chipseeker.plotDistToTSS(GR_anno[key]))
         grdevices.dev_off()
-
         grdevices.png(file='{}/{}_annoData.png'.format(out,key).replace(' ','_'), width=1000, height=500)
         upsetplot(GR_anno[key], vennpie=True)
         grdevices.dev_off()
@@ -355,17 +451,14 @@ def plot_venn2_set(dict_of_sets, string_name_of_overlap, folder, pvalue=False, t
     '''
     Plots a 2 way venn from a dictionary of sets
     Saves to file.
-
     Inputs
     ------
     dict_of_sets: dictionary of sets to overlap
     string_name_of_overlap: string with name of overlap
     folder: output folder
-
     Returns
     -------
     None
-
     '''
     folder = f'{folder}venn2/' if folder.endswith('/') else f'{folder}/venn2/'
     os.makedirs(folder, exist_ok=True)
@@ -420,17 +513,14 @@ def plot_venn3_set(dict_of_sets, string_name_of_overlap, folder):
     '''
     Makes 3 way venn from 3 sets.
     Saves to file.
-
     Inputs
     ------
     dict_of_sets: dictionary of sets to overlap
     string_name_of_overlap: string with name of overlap
     folder: output folder
-
     Returns
     -------
     None
-
     '''
     folder = f'{folder}venn3/' if folder.endswith('/') else f'{folder}/venn3/'
     os.makedirs(folder, exist_ok=True)
@@ -481,18 +571,15 @@ def plot_venn3_counts(element_list, set_labels, string_name_of_overlap, folder):
     '''
     Plot three way venn based on counts of specific overlaping numbers.
     Saves to file.
-
     Inputs
     ------
     element_list: tuple with counts of the the overlaps from (Abc,aBc,ABc,abC,AbC,ABC)
     set_labels: list or tuple with names of the overlaps ('A','B','C')
     string_name_of_overlap: string with name of overlap
     folder: output folder
-
     Returns
     -------
     None
-
     '''
     folder = f'{folder}venn3/' if folder.endswith('/') else f'{folder}/venn3/'
     os.makedirs(folder, exist_ok=True)
@@ -542,12 +629,10 @@ def overlap_two(bed_dict, genome=None):
     Performs annotations with ChIPseeker if genome is specified.
     Plots venn diagrams of peak overlaps
     If genome is specified, also plots venn diagrams of annotated gene sets.
-
     Inputs
     ------
     bed_dict:  dictionary of BedTool files
     genome: 'hg38','hg19','mm10'
-
     Returns
     -------
     Returns a dictionary of dataframes from unique and overlap peaks.
@@ -629,11 +714,10 @@ def overlap_two(bed_dict, genome=None):
     return return_dict
 
 
-def enrichr(gene_list, description, out_dir, scan=None, max_terms=10, load=False, figsize=(12, 6)):
+def enrichr(gene_list, description, out_dir, scan=None, max_terms=10, load=False, figsize=(12, 6), dotplot=False):
     '''
     Performs GO Molecular Function, GO Biological Process and KEGG enrichment on a gene list.
     Uses enrichr.
-
     Inputs
     ------
     gene_list: list of genes to perform enrichment on
@@ -643,12 +727,9 @@ def enrichr(gene_list, description, out_dir, scan=None, max_terms=10, load=False
     max_terms: limit return plot to this max
     load: load results
     figsize: change fig size
-
     Returns
     -------
-
     None
-
     '''
 
     out_dir = val_folder(out_dir)
@@ -665,20 +746,30 @@ def enrichr(gene_list, description, out_dir, scan=None, max_terms=10, load=False
         testscan = {**testscan, **scan}
 
     for nick, name in tq(testscan.items()):
-        gseapy.enrichr(gene_list=gene_list,
-                       figsize=figsize,
-                       top_term=max_terms,
-                       description=f'{description}_{nick}',
-                       gene_sets=name,
-                       outdir=out_dir,
-                       format='png'
-                       )
+        res = gseapy.enrichr(gene_list=gene_list,
+                             figsize=figsize,
+                             top_term=max_terms,
+                             description=f'{description}_{nick}',
+                             gene_sets=name,
+                             outdir=out_dir,
+                             format='png'
+                             )
+
+        if dotplot:
+            dtplt = f'{out_dir}{description}_{name}_dotplot.png'
+            gseapy.dotplot(res,
+                           title=f'{description} {name} DotPlot',
+                           top_term=20,
+                           ofname=dtplt
+                           )
 
         if load:
             png = f'{out_dir}{name}.{description}_{nick}.enrichr.reports.png'
             if os.path.isfile(png):
                 print(f'{description}_{nick}:')
                 image_display(png)
+            if dotplot:
+                image_display(dtplt)
 
     with open(f'{out_dir}{description}_genes.txt', 'w') as fp:
         for gene in set(gene_list):
@@ -693,12 +784,10 @@ def overlap_three(bed_dict, genome=None):
     Performs annotations with ChIPseeker if genome is specified.
     Plots venn diagrams of peak overlaps
     If genome is specified, also plots venn diagrams of annotated gene sets.
-
     Inputs
     ------
     bed_dict:  dictionary of BedTool files
     genome: 'hg38','hg19','mm10'
-
     Returns
     -------
     Returns a dictionary of dataframes from unique and overlap peaks.
@@ -760,14 +849,12 @@ def overlap_three(bed_dict, genome=None):
 def splice_bar(data, title, x, y):
     '''
     Plots bar graph of misplicing counts as file.
-
     Inputs
     ------
     data: dataframe
     title: string plot title
     x: string of columm title for number of events in data
     y: string of column title for splicing type in data
-
     Returns
     -------
     None
@@ -788,17 +875,13 @@ def splice_bar(data, title, x, y):
 def make_df(dict_of_sets, name):
     '''
     Make a dataframe from a dictionary of sets.
-
     Inputs
     ------
     dict_of_sets: dictionary of sets
     name: string name of file
-
     Returns
     -------
-
     dataframe
-
     '''
 
     out_dir = '{pwd}/{name}/'.format(pwd=os.getcwd(), name=name.replace(' ', '_'))
@@ -821,7 +904,6 @@ def make_df(dict_of_sets, name):
 def plot_col(df, title, ylabel, out='', xy=(None, None), xticks=[''], plot_type=['violin'], pvalue=False, compare_tags=None):
     '''
     Two column boxplot from dataframe.  Titles x axis based on column names.
-
     Inputs
     ------
     df: dataframe (uses first two columns)
@@ -833,11 +915,9 @@ def plot_col(df, title, ylabel, out='', xy=(None, None), xticks=[''], plot_type=
     plot_type: list of one or more: violin, box, swarm (default=violin)
     compare_tags:  if xy and pvalue is specified and there are more than two tags in x, specify the tags to compare. eg. ['a','b']
     out: out parent directory.  if none returns into colplot/
-
     Returns
     ------
     None
-
     '''
     out = val_folder(out)
 
@@ -901,11 +981,9 @@ def scatter_regression(df, s=150, alpha=0.3, line_color='dimgrey', svg=False, re
     '''
     Scatter plot and Regression based on two matched vectors.
     Plots r-square and pvalue on .png
-
     Inputs
     ------
     df: dataframe to plot (column1 = x axis, column2= y axis)
-
     kwargs (defaults):
     s: point size (150)
     alpha: (0.3)
@@ -920,13 +998,11 @@ def scatter_regression(df, s=150, alpha=0.3, line_color='dimgrey', svg=False, re
     Alabel: string for IndexA group ('Group A')
     IndexB: set or list of genes to highlight blue
     annotate:  list of genes to annotate on the graph
-
     Returns
     -------
     None
     Prints file name and location
     Saves .png plot in scatter_regression/ folder in cwd with dpi=300.
-
     '''
     sns.set(context='paper', style="white", font_scale=3, font='Arial',
             rc={"lines.linewidth": 2,
@@ -981,23 +1057,18 @@ def signature_heatmap(vst, sig, name, cluster_columns=False):
     '''
     Generate heatmap of differentially expressed genes using
     variance stablized transfrmed log2counts.
-
     Inputs
     ------
     vst = gene name is the index
     sig = set or list of signature
     name = name of file
     cluster_columns = bool (default = False)
-
     Outputs
     ------
     .png and .svg file of heatmap
-
     Returns
     -------
     None
-
-
     '''
     sns.set(font='Arial', font_scale=2, style='white', context='paper')
     vst['gene_name'] = vst.index
@@ -1016,10 +1087,8 @@ def signature_heatmap(vst, sig, name, cluster_columns=False):
 def ssh_job(command_list, job_name, job_folder, project='nimerlab', threads=1, q='general', mem=3000):
     '''
     Sends job to LSF pegasus.ccs.miami.edu
-
     Inputs
     ------
-
     command_list: list of commands with new lines separated by commas
     job_name: string of job name (also used for log file)
     job_folder: string of folder to save err out and script files
@@ -1028,11 +1097,9 @@ def ssh_job(command_list, job_name, job_folder, project='nimerlab', threads=1, q
     project: string pegasus project name (default = nimerlab)
     threads: integer of number of threads. default = 1
     ssh: whether or not to ssh into pegasus. Default=True
-
     Returns
     -------
     Tuple(rand_id, job_folder, prejob_files)
-
     '''
 
     job_folder = job_folder if job_folder.endswith('/') else f'{job_folder}/'
@@ -1072,7 +1139,6 @@ def ssh_check(ID, job_folder, prejob_files=None, wait=True, return_filetype=None
     '''
     Checks for pegasus jobs sent by ssh_job and prints contents of the log file.
     Optionally copies and/or loads the results file.
-
     Inputs
     ------
     Job ID: Job ID
@@ -1084,11 +1150,9 @@ def ssh_check(ID, job_folder, prejob_files=None, wait=True, return_filetype=None
     check_IO_logs: read output from .err .out logs
     sleep: seconds to sleep (default 10)
     job_name: pepends local ssh folder with job name if provided
-
     Returns
     ------
     None
-
     '''
     job_folder = val_folder(job_folder)
     jobs_list = os.popen('ssh pegasus bhist -w').read()
@@ -1153,11 +1217,9 @@ def deeptools(regions, signals, matrix_name, out_name, pegasus_folder, copy=Fals
     scaled_names: optional names for scaled start and end (default ('TSS','TES'))
     make: tuple of deeptool commands.  options: matrix, heatmap, heatmap_group, profile, profile_group
     copy: bool.  Copy region and signal files to peagasus
-
     Returns
     -------
     string of commands for ssh_job
-
     '''
     pegasus_folder = pegasus_folder if pegasus_folder.endswith('/') else f'{pegasus_folder}/'
     os.system(f"ssh pegasus 'mkdir {pegasus_folder}'")
@@ -1229,11 +1291,9 @@ def order_cluster(dict_set, count_df, gene_column_name, title):
               should also contain a column with the gene name.
     gene_column_name: the pandas column specifying the gene name (used in the dict_set)
     title: title for the plot and for saving the file
-
     Returns
     ------
     (Ordered Index List, Ordered Count DataFrame, Clustermap)
-
     '''
     from scipy.cluster import hierarchy
 
@@ -1328,11 +1388,9 @@ def gsea_barplot(out_dir, pos_file, neg_file, gmt_name, max_number=20):
     neg_file: GSEA negative enrichment .xls file
     gmt_name: name of enrichment (ex: Hallmarks)
     max_number: max number of significant sets to report (default 20)
-
     Returns
     -------
     string of save file
-
     '''
 
     out_dir = out_dir if out_dir.endswith('/') else '{}/'.format(out_dir)
@@ -1420,7 +1478,6 @@ def genomic_annotation_plots(dict_of_annotated_dfs, txdb_db, filename='Genomic_A
     '''
     from chipseeker annotation output as df
     txdb_db = UCSC or Ensembl
-
     '''
 
     db = '(uc' if txdb_db == 'UCSC' else '(ENS'
@@ -1453,7 +1510,6 @@ def extract_ENCODE_report_data(base_folder, report_type, out_folder='', histone=
     base_folder:  AQUAS results folder.  Will use subfolders for sample name and look for report in those subfolders.
     report_type: 'AQUAS' or 'cromwell'
     replicate: Whether the ChIPseq was performed as a repliate or not.
-
     Returns
     -----
     DataFrame of results
@@ -1517,12 +1573,10 @@ def overlap_four(bed_dict, genome=None):
     Merges all overlapping peaks for each bed into a master file.
     Intersects beds to merged master file.
     Performs annotations with ChIPseeker if genome is specified.
-
     Inputs
     ------
     bed_dict:  dictionary of BedTool files
     genome: 'hg38','hg19','mm10'
-
     Returns
     -------
     Returns a dictionary of dataframes from unique and overlap peaks.
@@ -1605,9 +1659,7 @@ def extract_clustermap_clusters(clustermap, num_of_clusters):
 
     '''
     Input a seaborn clustermap and number of clusters to id
-
     Returns an array of labelled clusters based on the original dataframe used to generate the clustermap.
-
     Usage: df['cluster'] = extract_clutsermap_clusters(clustermap, 2)
     '''
 
@@ -1641,7 +1693,6 @@ def generate_ROSE_gffs(bed_file, name):
 
 def active_enhancer_determination(H3K4me1_bw, H3K4me3_bw, H3K4me1_bed, H3K27ac_bed, name, TSS_bed=None, gtf_file=None, TSS_region=(2500, 2500), chrom_sizes=None):
     '''
-
     Input
     ----------
     TSS_bed: location of a premade TSS window bed file.  If None, gtf_file, chrom.sizes, and TSS_region must be specified.
@@ -1653,13 +1704,10 @@ def active_enhancer_determination(H3K4me1_bw, H3K4me3_bw, H3K4me1_bed, H3K27ac_b
     H3K4me1_bed: peakfile for H3K4me1
     H3K27ac_bed: peakfile for H2K27ac
     name: name of the output sample
-
     Output
     -----------
-
     Saves enhancer bed file to disk as well as TSS window bed file if TSS_bed is not provided
     returns an enhancer bedfile
-
     '''
 
     import gtfparse
@@ -1793,13 +1841,10 @@ def boxplot_significance_hue(x, y, hue, data, type_test=None):
     sns.boxplot(x='rna_ratio_shift_groups',
                 y='crt_mean',
                 data=df_short_long_remove_inf, fliersize=0)
-
     boxplot_significance(x='rna_ratio_shift_groups',
                          y='crt_mean',
                          data=df_short_long_remove_inf, type_test='ttest')
-
     # x,y and  hue  boxplot
-
     sns.boxplot(x='rna_ratio_shift_groups',
                 y='pause_index',
                 hue='group',   # hue cagegory
@@ -1821,7 +1866,6 @@ def get_text_positions(x_data, y_data, txt_width, txt_height):
     import numpy as np
     import matplotlib.pyplot as plt
     from numpy.random import *
-
     a = zip(y_data, x_data)
     text_positions = y_data.copy()
     for index, (y, x) in enumerate(a):
@@ -1840,34 +1884,25 @@ def get_text_positions(x_data, y_data, txt_width, txt_height):
                         text_positions[index] = sorted_ltp[k][0] + txt_height
                         break
     return text_positions
-
 def text_plotter(x_data, y_data, text_positions, axis,txt_width,txt_height):
     import numpy as np
     import matplotlib.pyplot as plt
     from numpy.random import *
-
     for x,y,t in zip(x_data, y_data, text_positions):
         axis.text(x - txt_width, 1.01*t, '%d'%int(y),rotation=0, color='blue')
         if y != t:
             axis.arrow(x, t,0,y-t, color='red',alpha=0.3, width=txt_width*0.1,
                        head_width=txt_width, head_length=txt_height*0.5,
                        zorder=0,length_includes_head=True)
-
-
-
 def TSS_enhancer_bar(tss_bed, enhancer_bed, bed_dict, title, folder):
     ##
-
     import pandas as pd
-
     Numbers = dict(TSS=[], Enhancer=[], Other=[], Total=[], TSS_F=[], Enh_F=[], Other_F=[], name=[])
-
     for name,bed in bed_dict.items():
         tss=len(bed.sort().merge().intersect(tss_bed.sort().merge()).intersect(enhancer_bed.sort().merge(),v=True))
         enhancer=len(bed.sort().merge().intersect(enhancer_bed.sort().merge()).intersect(tss_bed.sort().merge(),v=True))
         other = len(bed.sort().merge().intersect(enhancer_bed.sort().merge(), v=True).intersect(tss_bed.sort().merge(),v=True))
         total = tss + enhancer + other
-
         Numbers['TSS'].append(tss)
         Numbers['Enhancer'].append(enhancer)
         Numbers['Other'].append(other)
@@ -1876,33 +1911,23 @@ def TSS_enhancer_bar(tss_bed, enhancer_bed, bed_dict, title, folder):
         Numbers['Enh_F'].append(enhancer/total)
         Numbers['Other_F'].append(other/total)
         Numbers['name'].append(name)
-
     df= pd.DataFrame(Numbers, index=Numbers['name'])
     df['Peak_type']=df.name.apply(lambda x: x.split(' ')[-1])
     df['IP']=df.name.apply(lambda x: x.split(' ')[0])
     df['Total_F']=1
-
     return df
-
 def survival():
     ## import from lifelines
-
     ax=plt.subplot(111)
-
     kmf.fit(KM_vsd_top.Time, event_observed=KM_vsd_top.Event, label=['CARM1 High'])
     kmf.plot(show_censors=True,ax=ax)
-
     kmf.fit(KM_vsd_bottom.Time, event_observed=KM_vsd_bottom.Event, label=['CARM1 Lo'])
     kmf.plot(show_censors=True, ax=ax)
-
     plt.title("Survival using VSD Normalization")
-
     plt.savefig(Folder + "CARM1-vsd-Survival-CI.png", dpi=200)
     plt.savefig(Folder + "CARM1-vsd-Survival-CI.svg", dpi=200)
-
 def surface_plot(df,name):
     #### import plotly
-
     lighting_effects = dict(ambient=0.4, diffuse=.9, roughness = 1, fresnel=5)
     data = [go.Surface(z=df.values.tolist(), colorscale='Reds', cmin=0, cmax=20, reversescale=False, lighting=lighting_effects)
            ]
@@ -1938,20 +1963,15 @@ def surface_plot(df,name):
             aspectmode = 'manual'
         )
     )
-
     fig = dict(data=data, layout=layout)
     plot(fig, filename='{}_eob.html'.format(name))
-
 def chouchou(key, df):
     ## add options for changing names and inhibitors
-
     import seaborn as sns
     import pandas as pd
     import matplotlib.pyplot as plt
-
     sns.set(context='paper', font_scale=2, font='Arial', style='white')
     plt.figure(dpi=300, figsize=(5,5))
-
     plt.plot([1,0], c='grey', linewidth=3)
     plt.scatter(x=df['PRMT5i(D/Dx)'],
                 y=df['PARPi(D/Dx)'],
@@ -1968,7 +1988,6 @@ def chouchou(key, df):
              x=1.4, y=1.4,
              horizontalalignment='right',
              verticalalignment='top')
-
     plt.tight_layout()
     sns.despine()
     plt.savefig('{}_chou-chou_synergy_plot.png'.format(key), dpi=300)
