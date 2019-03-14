@@ -8,24 +8,11 @@ import re
 import random
 from datetime import datetime
 import time
-import pickle
-# from math import floor, log10
 
 from pybedtools import BedTool
 import pandas as pd
 import numpy as np
-import gseapy
-import rpy2.robjects as ro
-import rpy2.rinterface as ri
-from rpy2.robjects.packages import importr
-from rpy2.robjects import pandas2ri
-from matplotlib_venn import venn2, venn2_circles, venn3, venn3_circles
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-import seaborn as sns
-from scipy import stats
-from scipy.cluster.hierarchy import fcluster
-from IPython.display import Image, display
+
 from tqdm import tqdm_notebook, tqdm
 
 # Get Current Git Commit Hash for version
@@ -46,6 +33,7 @@ def val_folder(folder):
 
 
 def image_display(file):
+    from IPython.display import Image, display
     display(Image(file))
 
 
@@ -167,7 +155,7 @@ def peak_overlap_MC(df_dict, background, permutations=1000, seed=42, notebook=Tr
     return p
 
 
-def gsea_dotplot(df_dict, name='', qthresh=0.05, gene_sets=[], dotsize_factor=4, figsize=(4, 10), out_dir='.'):
+def gsea_dotplot(df_dict, title='', qthresh=0.05, gene_sets=[], dotsize_factor=4, figsize=(4, 10), out_dir='.'):
     '''
     Makes a dotplot of GSEA results with the dot size as the percent of genes in the leading edge and the color the NES.
     Plots only significant dots at given fdr theshold
@@ -180,9 +168,16 @@ def gsea_dotplot(df_dict, name='', qthresh=0.05, gene_sets=[], dotsize_factor=4,
     pgene_sets:  list of gene sets to plot.  If empty, will plot all with FDR q value < 0.05
     dot_size_factor:  scale to increase dot size for leading edge %
     out_dir: output directory
-    '''
 
-    out_dir = out_dir if out_dir.endswith('/') else f'{out_dir}/'
+    Returns
+    -------
+    Gene_Sets used for plotting
+
+    '''
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+
+    out_dir = val_folder(out_dir)
 
     index = []
 
@@ -197,7 +192,7 @@ def gsea_dotplot(df_dict, name='', qthresh=0.05, gene_sets=[], dotsize_factor=4,
     index = list(set(index))
 
     # use gene_sets if provided
-    if len(gene_sets > 0):
+    if len(gene_sets) > 0:
         index = gene_sets
 
     # make master df
@@ -211,10 +206,10 @@ def gsea_dotplot(df_dict, name='', qthresh=0.05, gene_sets=[], dotsize_factor=4,
     data_df.index = range(len(data_df))
 
     # make x coordinate
-    samples = data_df.name.unique()
+    samples = data_df.sample_name.unique()
     sample_number = len(samples)
     sample_x = {name: (x + .5) for name, x in zip(samples, range(sample_number))}
-    data_df['x'] = data_df.name.map(sample_x)
+    data_df['x'] = data_df.sample_name.map(sample_x)
 
     # make y coordinate
     gene_set = list(index[::-1])
@@ -241,7 +236,7 @@ def gsea_dotplot(df_dict, name='', qthresh=0.05, gene_sets=[], dotsize_factor=4,
     # format x axis
     ax.set_xlim(0, sample_number)
     ax.xaxis.set_major_locator(plt.FixedLocator(data_df.x))
-    ax.xaxis.set_major_formatter(plt.FixedFormatter(data_df.name))
+    ax.xaxis.set_major_formatter(plt.FixedFormatter(data_df.sample_name))
     ax.set_xticklabels(data_df.sample_name, fontsize=16, rotation=45)
 
     # add colorbar
@@ -264,7 +259,7 @@ def gsea_dotplot(df_dict, name='', qthresh=0.05, gene_sets=[], dotsize_factor=4,
     # offset legend
     bb = legend.get_bbox_to_anchor().inverse_transformed(ax.transAxes)
     xOffset = .5
-    yOffset = -.4
+    yOffset = 0
     bb.x0 += xOffset
     bb.x1 += xOffset
     bb.y0 += yOffset
@@ -272,12 +267,14 @@ def gsea_dotplot(df_dict, name='', qthresh=0.05, gene_sets=[], dotsize_factor=4,
     legend.set_bbox_to_anchor(bb, transform=ax.transAxes)
 
     # set title
-    ax.set_title(name.replace('_', ' '), fontsize=20)
+    ax.set_title(title.replace('_', ' '), fontsize=20)
 
     sns.despine()
 
-    fig.savefig(f'{out_dir}{name.replace(" ", "_")}.png', bbox_inches='tight')
-    fig.savefig(f'{out_dir}{name.replace(" ", "_")}.svg', bbox_inches='tight')
+    fig.savefig(f'{out_dir}{title.replace(" ", "_")}.png', bbox_inches='tight')
+    fig.savefig(f'{out_dir}{title.replace(" ", "_")}.svg', bbox_inches='tight')
+
+    return gene_set
 
 
 def annotate_peaks(dict_of_dfs, folder, genome, db='UCSC', check=False):
@@ -294,6 +291,11 @@ def annotate_peaks(dict_of_dfs, folder, genome, db='UCSC', check=False):
     -------
     dictionary of annotated bed files as dataframe
     '''
+    import rpy2.robjects as ro
+    import rpy2.rinterface as ri
+    from rpy2.robjects.packages import importr
+    from rpy2.robjects import pandas2ri
+
     pandas2ri.activate()
 
     tq = tq_type()
@@ -407,6 +409,9 @@ def plot_venn2(Series, string_name_of_overlap, folder):
     Plots a 2 way venn.
     Saves to file.
     '''
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    from matplotlib_venn import venn2, venn2_circles
 
     folder = f'{folder}venn2/' if folder.endswith('/') else f'{folder}/venn2/'
     os.makedirs(folder, exist_ok=True)
@@ -460,6 +465,11 @@ def plot_venn2_set(dict_of_sets, string_name_of_overlap, folder, pvalue=False, t
     -------
     None
     '''
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    from matplotlib_venn import venn2, venn2_circles
+    from scipy import stats
+
     folder = f'{folder}venn2/' if folder.endswith('/') else f'{folder}/venn2/'
     os.makedirs(folder, exist_ok=True)
 
@@ -522,6 +532,10 @@ def plot_venn3_set(dict_of_sets, string_name_of_overlap, folder):
     -------
     None
     '''
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    from matplotlib_venn import venn3, venn3_circles
+
     folder = f'{folder}venn3/' if folder.endswith('/') else f'{folder}/venn3/'
     os.makedirs(folder, exist_ok=True)
 
@@ -581,6 +595,10 @@ def plot_venn3_counts(element_list, set_labels, string_name_of_overlap, folder):
     -------
     None
     '''
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    from matplotlib_venn import venn3, venn3_circles
+
     folder = f'{folder}venn3/' if folder.endswith('/') else f'{folder}/venn3/'
     os.makedirs(folder, exist_ok=True)
 
@@ -731,6 +749,7 @@ def enrichr(gene_list, description, out_dir, scan=None, max_terms=10, load=False
     -------
     None
     '''
+    import gseapy
 
     out_dir = val_folder(out_dir)
     tq = tq_type()
@@ -859,6 +878,9 @@ def splice_bar(data, title, x, y):
     -------
     None
     '''
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+
     sns.set(context='paper', font='Arial', style='white', font_scale=2)
 
     plot = sns.barplot(x=x, y=y, data=data)
@@ -919,6 +941,10 @@ def plot_col(df, title, ylabel, out='', xy=(None, None), xticks=[''], plot_type=
     ------
     None
     '''
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    from scipy import stats
+
     out = val_folder(out)
 
     plt.clf()
@@ -1004,6 +1030,10 @@ def scatter_regression(df, s=150, alpha=0.3, line_color='dimgrey', svg=False, re
     Prints file name and location
     Saves .png plot in scatter_regression/ folder in cwd with dpi=300.
     '''
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    from scipy import stats
+
     sns.set(context='paper', style="white", font_scale=3, font='Arial',
             rc={"lines.linewidth": 2,
                 'figure.figsize': (9, 9),
@@ -1070,6 +1100,9 @@ def signature_heatmap(vst, sig, name, cluster_columns=False):
     -------
     None
     '''
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+
     sns.set(font='Arial', font_scale=2, style='white', context='paper')
     vst['gene_name'] = vst.index
 
@@ -1295,7 +1328,10 @@ def order_cluster(dict_set, count_df, gene_column_name, title):
     ------
     (Ordered Index List, Ordered Count DataFrame, Clustermap)
     '''
+    import matplotlib.pyplot as plt
+    import seaborn as sns
     from scipy.cluster import hierarchy
+    import matplotlib.patches as mpatches
 
     out_list = []
     df = count_df.copy()
@@ -1344,6 +1380,11 @@ def order_cluster(dict_set, count_df, gene_column_name, title):
 
 
 def ranked_ordered_cluster(dict_set, in_df, gene_column_name, dict_sort_col, ascending=False):
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    from scipy import stats
+    import matplotlib.patches as mpatches
+
     out_list = []
     df = in_df.copy()
     df['group'] = 'NA'
@@ -1392,6 +1433,8 @@ def gsea_barplot(out_dir, pos_file, neg_file, gmt_name, max_number=20):
     -------
     string of save file
     '''
+    import matplotlib.pyplot as plt
+    import seaborn as sns
 
     out_dir = out_dir if out_dir.endswith('/') else '{}/'.format(out_dir)
     out_dir = '' if out_dir == '/' else out_dir
@@ -1431,6 +1474,9 @@ def gsea_barplot(out_dir, pos_file, neg_file, gmt_name, max_number=20):
 
 def hinton(df, filename, folder, max_weight=None):
     """Draw Hinton diagram for visualizing a weight matrix."""
+
+    import matplotlib.pyplot as plt
+    import seaborn as sns
 
     folder = folder if folder.endswith('/') else f'{folder}/'
     folder = f'{os.getcwd()}/' if folder == '/' else folder
@@ -1479,6 +1525,8 @@ def genomic_annotation_plots(dict_of_annotated_dfs, txdb_db, filename='Genomic_A
     from chipseeker annotation output as df
     txdb_db = UCSC or Ensembl
     '''
+    import matplotlib.pyplot as plt
+    import seaborn as sns
 
     db = '(uc' if txdb_db == 'UCSC' else '(ENS'
     order = ['Promoter (<=1kb)', 'Promoter (1-2kb)', 'Promoter (2-3kb)', 'Intron', 'Exon', "3' UTR", "5' UTR", 'Downstream (<1kb)', 'Downstream (1-2kb)', 'Downstream (2-3kb)', 'Distal Intergenic']
@@ -1583,6 +1631,7 @@ def overlap_four(bed_dict, genome=None):
     If genome is specified, includes a dictionary of annotated genes.
     '''
     from collections import OrderedDict
+    import pickle
 
     names = list(bed_dict.keys())
 
@@ -1662,6 +1711,7 @@ def extract_clustermap_clusters(clustermap, num_of_clusters):
     Returns an array of labelled clusters based on the original dataframe used to generate the clustermap.
     Usage: df['cluster'] = extract_clutsermap_clusters(clustermap, 2)
     '''
+    from scipy.cluster.hierarchy import fcluster
 
     return fcluster(clustermap.dendrogram_row.linkage, num_of_clusters, criterion='maxclust')
 
@@ -1769,6 +1819,7 @@ def active_enhancer_determination(H3K4me1_bw, H3K4me3_bw, H3K4me1_bed, H3K27ac_b
 
 def boxplot_significance(x, y, data, type_test=None, __init__set=None):
 
+    import matplotlib.pyplot as plt
     from decimal import Decimal
     from scipy.stats import ttest_ind, ks_2samp
 
@@ -1859,6 +1910,84 @@ def boxplot_significance_hue(x, y, hue, data, type_test=None):
         k, d_h = e[1]
         n_loop = e[0]
         boxplot_significance(hue, y, d_h, type_test=type_test, __init__set=n_loop)
+
+
+def logrank_km_hazard_ratio(km_df, time_col='months', censor_col='censor', group_col='group', reference=0):
+    '''
+    Determine the Hazard Ratio of a Kaplan Meier plot between to series in lifelines censor format
+
+    Inputs
+    ------
+    km_df: dataframe of all samples with a column for the time, censor status, and which group (of two)
+    time_col: column name for the time
+    censor_col: column name for the censor status
+    group_col: column name for the group
+    reference: sample reference for HR (0 or 1)
+
+    Outputs
+    ------
+    (Hazard Ratio, (Lower 95% CI, Upper 95% CI), Tau_df)
+
+    '''
+    from math import sqrt
+
+    # Generate column of n_j (total number alive at each datapoint: 'cominbed_n_max')
+    km_df.sort_values(by=time_col, inplace=True)
+    km_df['combined_n'] = [x for x in range(len(km_df) - 1, -1, -1)]
+    km_df = km_df.join(km_df.groupby(time_col).combined_n.max(), on=time_col, rsuffix='_max')
+
+    # Generate column of n1_j and n2_j (total number of group1 and group2 alive at each datapoint)
+    group1 = km_df[group_col].unique().tolist()[reference]
+    group1_number = len(km_df[km_df[group_col] == group1])
+    group1_n = []
+
+    for x in km_df[group_col].tolist():
+        in_group = 1 if x == group1 else 0
+        group1_number -= in_group
+        group1_n.append(group1_number)
+
+    km_df['group1_n'] = group1_n
+    km_df['group2_n'] = km_df.combined_n - km_df.group1_n
+
+    # Make a new column with the number of each group alive at entering that timpoint (max of a groupby time)
+    km_df = km_df.join(km_df.groupby(time_col).group1_n.max(), on=time_col, rsuffix='_max')
+    km_df = km_df.join(km_df.groupby(time_col).group2_n.max(), on=time_col, rsuffix='_max')
+
+    # Generate a column of d_j with total number of deaths at each timepoint
+    km_df = km_df.join(km_df.groupby(time_col)[censor_col].sum(), on=time_col, rsuffix='_total_deaths')
+
+    # Subset a dataframe with only non-censored data.
+    km_data_tau = km_df[km_df[censor_col] == 1].copy()
+
+    # Determine the expected values of group1 and group2 at each timepoint (Each relevant only within its own group)
+    km_data_tau['e1'] = km_data_tau.group1_n_max * (km_data_tau[f'{censor_col}_total_deaths'] / km_data_tau.combined_n_max)
+    km_data_tau['e2'] = km_data_tau.group2_n_max * (km_data_tau[f'{censor_col}_total_deaths'] / km_data_tau.combined_n_max)
+
+    # Total Summed Expected and Observed values
+    gr1_exp = km_data_tau.groupby(group_col).e1.sum()[0]
+    gr2_exp = km_data_tau.groupby(group_col).e2.sum()[1]
+    gr1_obs, gr2_obs = km_data_tau.groupby(group_col)[censor_col].sum()
+
+    # Hazard Ratio
+    HR = (gr1_obs / gr1_exp) / (gr2_obs / gr2_exp)
+
+    # Standard Error of HR
+    SE = sqrt((1 / gr1_exp) + (1 / gr2_exp))
+
+    # Confidence intervals
+    L = np.log(HR)
+    L95 = np.exp(L - (1.96 * SE))
+    U95 = np.exp(L + (1.96 * SE))
+
+    return (HR, (L95, U95), km_data_tau)
+
+
+def scale_factor(spike_reads1, spike_reads2, human_reads1, human_reads2):
+    ratio = spike_reads1 / spike_reads2
+    human_adjusted = ratio * human_reads2
+    human_ratio = human_reads1 / human_adjusted
+
+    return human_ratio
 
 
 '''
