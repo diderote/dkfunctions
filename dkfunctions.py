@@ -37,6 +37,26 @@ def image_display(file):
     display(Image(file))
 
 
+def rplot(plot_func, filename, filetype, *args, **kwargs):
+    from rpy2.robjects.packages import importr
+    grdevices = importr('grDevices')
+    filetype = filetype.lower()
+
+    plot_types = {'png': grdevices.png,
+                  'svg': grdevices.svg,
+                  'pdf': grdevices.pdf
+                  }
+
+    plot_types[filetype](f'{filename}.{filetype}')
+    return_object = plot_func(*args, **kwargs)
+    grdevices.dev_off()
+
+    if filetype == 'png':
+        image_display(f'{filename}.{filetype}')
+
+    return return_object
+
+
 def read_pd(file, *args, **kwargs):
     if (file.split('.')[-1] == 'txt') or (file.split('.')[-1] == 'tab'):
         return pd.read_table(file, header=0, index_col=0, *args, **kwargs)
@@ -155,7 +175,7 @@ def peak_overlap_MC(df_dict, background, permutations=1000, seed=42, notebook=Tr
     return p
 
 
-def gsea_dotplot(df_dict, title='', qthresh=0.05, gene_sets=[], dotsize_factor=4, figsize=(4, 10), out_dir='.'):
+def gsea_dotplot(df_dict, title='', qthresh=0.05, top_term=None, gene_sets=[], dotsize_factor=4, figsize=(4, 10), out_dir='.'):
     '''
     Makes a dotplot of GSEA results with the dot size as the percent of genes in the leading edge and the color the NES.
     Plots only significant dots at given fdr theshold
@@ -166,6 +186,7 @@ def gsea_dotplot(df_dict, title='', qthresh=0.05, gene_sets=[], dotsize_factor=4
     name:  name used for title and filename
     qthresh: qvalue theshold for includsion
     pgene_sets:  list of gene sets to plot.  If empty, will plot all with FDR q value < 0.05
+    top_term:  integer specifing top number of sets to plot (by qvalue).  None plots all.
     dot_size_factor:  scale to increase dot size for leading edge %
     out_dir: output directory
 
@@ -201,6 +222,11 @@ def gsea_dotplot(df_dict, title='', qthresh=0.05, gene_sets=[], dotsize_factor=4
         df['sample_name'] = name
         data_df = pd.concat([data_df, df.loc[index]])
 
+    # extra filters
+    data_df = data_df[data_df.sample_name.notna()]
+    if top_term:
+        index = list(set(data_df.sort_values(by='FDR q-val').head(top_term).index.tolist()))
+
     # reindex
     data_df['GS_NAME'] = data_df.index
     data_df.index = range(len(data_df))
@@ -221,23 +247,25 @@ def gsea_dotplot(df_dict, title='', qthresh=0.05, gene_sets=[], dotsize_factor=4
     data_df['sig_tags'] = data_df[['FDR q-val', 'le_tags']].apply(lambda x: 0 if float(x[0]) > qthresh else float(x[1]), axis=1)
     data_df['area'] = data_df['sig_tags'] * dotsize_factor
 
+    plot_df = data_df[data_df.GS_NAME.isin(index)].copy()
+
     # plot
     plt.clf()
     sns.set(context='paper', style='white', font='Arial', rc={'figure.dpi': 300})
 
     fig, ax = plt.subplots(figsize=figsize)
-    sc = ax.scatter(x=data_df.x, y=data_df.y, s=data_df.area, edgecolors='face', c=data_df.NES, cmap='RdBu_r')
+    sc = ax.scatter(x=plot_df.x, y=plot_df.y, s=plot_df.area, edgecolors='face', c=plot_df.NES, cmap='RdBu_r')
 
     # format y axis
-    ax.yaxis.set_major_locator(plt.FixedLocator(data_df.y))
-    ax.yaxis.set_major_formatter(plt.FixedFormatter(data_df.GS_NAME))
-    ax.set_yticklabels(data_df.GS_NAME.apply(lambda x: x.replace('_', ' ')), fontsize=16)
+    ax.yaxis.set_major_locator(plt.FixedLocator(plot_df.y))
+    ax.yaxis.set_major_formatter(plt.FixedFormatter(plot_df.GS_NAME))
+    ax.set_yticklabels(plot_df.GS_NAME.apply(lambda x: x.replace('_', ' ')), fontsize=16)
 
     # format x axis
     ax.set_xlim(0, sample_number)
-    ax.xaxis.set_major_locator(plt.FixedLocator(data_df.x))
-    ax.xaxis.set_major_formatter(plt.FixedFormatter(data_df.sample_name))
-    ax.set_xticklabels(data_df.sample_name, fontsize=16, rotation=45)
+    ax.xaxis.set_major_locator(plt.FixedLocator(plot_df.x))
+    ax.xaxis.set_major_formatter(plt.FixedFormatter(plot_df.sample_name))
+    ax.set_xticklabels(plot_df.sample_name, fontsize=16, rotation=45)
 
     # add colorbar
     cax = fig.add_axes([0.95, 0.20, 0.03, 0.22])
@@ -248,9 +276,13 @@ def gsea_dotplot(df_dict, title='', qthresh=0.05, gene_sets=[], dotsize_factor=4
 
     # add legend
     markers = []
-    max_value = np.max(data_df.sig_tags)
+    min_value = plot_df[plot_df.sig_tags > 0].sig_tags.min()
+    max_value = plot_df.sig_tags.max()
+
+    rounded_min = int(10 * round((min_value - 5) / 10))
     rounded_max = int(10 * round((max_value + 5) / 10))  # rounds up to nearest ten (ie 61 --> 70)
-    sizes = [x for x in range(10, rounded_max + 1, 10)]
+
+    sizes = [x for x in range(rounded_min, rounded_max + 1, 10)]
     for size in sizes:
         markers.append(ax.scatter([], [], s=size * dotsize_factor, c='k'))
     legend = ax.legend(markers, sizes, prop={'size': 12})
@@ -258,7 +290,7 @@ def gsea_dotplot(df_dict, title='', qthresh=0.05, gene_sets=[], dotsize_factor=4
 
     # offset legend
     bb = legend.get_bbox_to_anchor().inverse_transformed(ax.transAxes)
-    xOffset = .5
+    xOffset = .6
     yOffset = 0
     bb.x0 += xOffset
     bb.x1 += xOffset
@@ -274,7 +306,7 @@ def gsea_dotplot(df_dict, title='', qthresh=0.05, gene_sets=[], dotsize_factor=4
     fig.savefig(f'{out_dir}{title.replace(" ", "_")}.png', bbox_inches='tight')
     fig.savefig(f'{out_dir}{title.replace(" ", "_")}.svg', bbox_inches='tight')
 
-    return gene_set
+    return plot_df
 
 
 def annotate_peaks(dict_of_dfs, folder, genome, db='UCSC', check=False):
@@ -508,7 +540,8 @@ def plot_venn2_set(dict_of_sets, string_name_of_overlap, folder, pvalue=False, t
     if None not in [pvalue, total_genes]:
         intersection_N = len(set_list[0] & set_list[1])
         pvalue = stats.hypergeom.sf(intersection_N, total_genes, len(set_list[0]), len(set_list[1]))
-        plt.text(0, 0, f'p-value = {pvalue:.03g}', fontsize=10)
+        pvalue_string = f'= {pvalue:.03g}' if pvalue > 1e-5 else '< 1e-5'
+        plt.text(0, -.05, f'p-value {pvalue_string}', fontsize=10, transform=c[1].axes.transAxes)
 
     plt.title(string_name_of_overlap.replace('_', ' ') + " overlaps")
     plt.tight_layout()
@@ -540,14 +573,14 @@ def plot_venn3_set(dict_of_sets, string_name_of_overlap, folder):
     os.makedirs(folder, exist_ok=True)
 
     plt.clf()
-    sns.set(style='white', rc={'figure.figsize': (7, 7)})
+    sns.set(style='white', context='paper', font_scale=2, rc={'figure.figsize': (7, 7)})
 
-    font = {'family': 'sans-serif',
-            'weight': 'normal',
-            'size': 16,
-            }
+#    font = {'family': 'sans-serif',
+#            'weight': 'normal',
+#            'size': 16,
+#            }
 
-    plt.rc('font', **font)
+#   plt.rc('font', **font)
 
     set_list = []
     set_names = []
@@ -570,7 +603,7 @@ def plot_venn3_set(dict_of_sets, string_name_of_overlap, folder):
     for circle, color in zip(c, colors_list):
         circle.set_edgecolor(color)
         circle.set_alpha(0.8)
-        circle.set_linewidth(4)
+        circle.set_linewidth(3)
 
     plt.title(f"{string_name_of_overlap.replace('_', ' ')} Overlaps")
     plt.tight_layout()
@@ -604,14 +637,14 @@ def plot_venn3_counts(element_list, set_labels, string_name_of_overlap, folder):
 
     plt.clf()
 
-    sns.set(style='white', rc={'figure.figsize': (7, 7)})
+    sns.set(style='white', context='paper', font_scale=1, rc={'figure.figsize': (7, 7)})
 
-    font = {'family': 'sans-serif',
-            'weight': 'normal',
-            'size': 16,
-            }
+    # font = {'family': 'sans-serif',
+    #        'weight': 'normal',
+    #        'size': 16,
+    #        }
 
-    plt.rc('font', **font)
+    # plt.rc('font', **font)
 
     # make venn
     venn_plot = venn3(subsets=element_list, set_labels=[name.replace('_', ' ') for name in set_labels])
@@ -628,7 +661,7 @@ def plot_venn3_counts(element_list, set_labels, string_name_of_overlap, folder):
     for circle, color in zip(c, colors_list):
         circle.set_edgecolor(color)
         circle.set_alpha(0.8)
-        circle.set_linewidth(4)
+        circle.set_linewidth(3)
 
     plt.title(f"{string_name_of_overlap.replace('_', ' ')} Overlaps")
     plt.tight_layout()
@@ -732,7 +765,7 @@ def overlap_two(bed_dict, genome=None):
     return return_dict
 
 
-def enrichr(gene_list, description, out_dir, scan=None, max_terms=10, load=False, figsize=(12, 6), dotplot=False):
+def enrichr(gene_list, description, out_dir, scan=None, max_terms=10, load=False, figsize=(12, 6), dotplot=False, save_type='png'):
     '''
     Performs GO Molecular Function, GO Biological Process and KEGG enrichment on a gene list.
     Uses enrichr.
@@ -771,18 +804,18 @@ def enrichr(gene_list, description, out_dir, scan=None, max_terms=10, load=False
                              description=f'{description}_{nick}',
                              gene_sets=name,
                              outdir=out_dir,
-                             format='png'
+                             format=save_type
                              )
 
         if dotplot:
-            dtplt = f'{out_dir}{description}_{name}_dotplot.png'
+            dtplt = f'{out_dir}{description}_{name}_dotplot.{save_type}'
             gseapy.dotplot(res,
                            title=f'{description} {name} DotPlot',
                            top_term=20,
                            ofname=dtplt
                            )
 
-        if load:
+        if load & (save_type == 'png'):
             png = f'{out_dir}{name}.{description}_{nick}.enrichr.reports.png'
             if os.path.isfile(png):
                 print(f'{description}_{nick}:')
@@ -831,13 +864,13 @@ def overlap_three(bed_dict, genome=None):
     C = bed_dict[names[2]].sort().merge()
 
     sorted_dict = OrderedDict({'master': master, 'A': A, 'B': B, 'C': C})
-    sorted_dict['Abc'] = (master + A - B - C)
-    sorted_dict['aBc'] = (master + B - A - C)
-    sorted_dict['ABc'] = (master + A + B - C)
-    sorted_dict['abC'] = (master + C - A - B)
-    sorted_dict['AbC'] = (master + A + C - B)
-    sorted_dict['aBC'] = (master + B + C - A)
-    sorted_dict['ABC'] = (master + A + B + C)
+    sorted_dict['A_bc'] = (master + A - B - C)
+    sorted_dict['aB_c'] = (master + B - A - C)
+    sorted_dict['A_B_c'] = (master + A + B - C)
+    sorted_dict['abC_'] = (master + C - A - B)
+    sorted_dict['A_bC_'] = (master + A + C - B)
+    sorted_dict['aB_C'] = (master + B + C - A)
+    sorted_dict['A_B_C_'] = (master + A + B + C)
 
     labTup = tuple(key for key in sorted_dict.keys())
     lenTup = tuple(len(bed) for bed in sorted_dict.values())
@@ -1982,12 +2015,47 @@ def logrank_km_hazard_ratio(km_df, time_col='months', censor_col='censor', group
     return (HR, (L95, U95), km_data_tau)
 
 
-def scale_factor(spike_reads1, spike_reads2, human_reads1, human_reads2):
-    ratio = spike_reads1 / spike_reads2
-    human_adjusted = ratio * human_reads2
-    human_ratio = human_reads1 / human_adjusted
+def scale_factor(spike1_tags, spike2_tags, IP1_tags, IP2_tags):
+    '''
+    rep1 should be the lowest of number of tags in all samples in the comparison.
+    returns scaled ratio of IP2.
+    '''
+    correction_factor = int(spike2_tags) / int(spike1_tags)
+    scaled_IP2 = int(IP2_tags) / correction_factor
+    IP2_ratio = scaled_IP2 / int(IP1_tags)
 
-    return human_ratio
+    return IP2_ratio
+
+
+def spike_in_plot(spike_df, sample_list, description, out_dir):
+    '''
+    df: spike-in df with spike-in reads counts in column 'spike_reads' and genome counts in 'genome_reads'.
+    sample_list:  list of samples to compare
+
+    '''
+    import seaborn as sns
+
+    df = spike_df.loc[sample_list].copy()
+    replicates = True if df.Replicate.unique.tolist() > 1 else False
+
+    base_idx = df.genome_reads.astype(int).idxmin()
+    base_spike = df.loc[base_idx, 'spike_reads']
+    base_genome = df.loc[base_idx, 'genome_reads']
+
+    df['Tag Ratio'] = df[['spike_reads', 'genome_reads']].apply(lambda x: scale_factor(base_spike, x[0], base_genome, x[1]))
+
+    sns.set(context='notebook', style='white', font='Arial')
+    if replicates:
+        sns.boxplot(x='Condition', y='Tag Ratio', data=df, palette='pastel')
+        sns.swarmplot(x='Condition', y='Ratio', hue='Replicate', data=df, size=8)
+    else:
+        sns.barplot(x='Condition', y='Ratio', data=df)
+
+    sns.mpl.pyplot.ylabel('Normalized Genome Read Ratio')
+    sns.mpl.pyplot.title(description.replace('_', ' '))
+    sns.despine()
+    sns.mpl.pyplot.savefig(f'{out_dir}{description.replaice(" ", "_")}.png')
+    sns.mpl.pyplot.savefig(f'{out_dir}{description.replaice(" ", "_")}.svg')
 
 
 '''
