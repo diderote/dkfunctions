@@ -309,7 +309,7 @@ def gsea_dotplot(df_dict, title='', qthresh=0.05, top_term=None, gene_sets=[], d
     return plot_df
 
 
-def annotate_peaks(dict_of_dfs, folder, genome, db='UCSC', check=False):
+def annotate_peaks(dict_of_dfs, folder, genome, db='UCSC', check=False, TSS=[-3000,3000], clean=False):
     '''
     Annotate a dictionary of dataframes from bed files to the genome using ChIPseeker and Ensembl annotations.
     Inputs
@@ -318,6 +318,7 @@ def annotate_peaks(dict_of_dfs, folder, genome, db='UCSC', check=False):
     folder: output folder
     genome: hg38, hg19, mm10
     db: default UCSC, but can also accept Ensembl
+    TSS: list of regions around TSS to annotate as promoter
     check: bool. checks whether annotation file already exists
     Returns
     -------
@@ -374,9 +375,14 @@ def annotate_peaks(dict_of_dfs, folder, genome, db='UCSC', check=False):
             col_len = len(df.columns)
             df.columns = ["chr", "start", "end"] + list(range(col_len - 3))
             GR = makeGR(df)
-            GR_anno = chipseeker.annotatePeak(GR, overlap='all', TxDb=txdb, annoDb=anno)
+            GR_anno = chipseeker.annotatePeak(GR, overlap='TSS', TxDb=txdb, annoDb=anno, tssRegion=ro.IntVector(TSS)) #switched to TSS on 10/02/2019
             return_dict[f'{key}_annotated'] = ro.pandas2ri.ri2py(chipseeker.as_data_frame_csAnno(GR_anno))
             return_dict[f'{key}_annotated'].to_excel(f'{folder}{key.replace(" ","_")}_annotated.xlsx')
+
+    if clean:
+        for k,df in return_dict.items():
+            df['Anno'] = df.annotation.apply(lambda x: 'Promoter' if x.split(' ')[0] == 'Promoter' else x)
+            df['Anno'] = df.Anno.apply(lambda x: 'Intergenic' if x.split(' ')[0] in ['Downstream', 'Distal'] else x)
 
     return return_dict
 
@@ -798,30 +804,33 @@ def enrichr(gene_list, description, out_dir, scan=None, max_terms=10, load=False
         testscan = {**testscan, **scan}
 
     for nick, name in tq(testscan.items()):
-        res = gseapy.enrichr(gene_list=gene_list,
-                             figsize=figsize,
-                             top_term=max_terms,
-                             description=f'{description}_{nick}',
-                             gene_sets=name,
-                             outdir=out_dir,
-                             format=save_type
-                             )
+        try:
+            res = gseapy.enrichr(gene_list=gene_list,
+                                 figsize=figsize,
+                                 top_term=max_terms,
+                                 description=f'{description}_{nick}',
+                                 gene_sets=name,
+                                 outdir=out_dir,
+                                 format=save_type
+                                 )
 
-        if dotplot:
-            dtplt = f'{out_dir}{description}_{name}_dotplot.{save_type}'
-            gseapy.dotplot(res,
-                           title=f'{description} {name} DotPlot',
-                           top_term=20,
-                           ofname=dtplt
-                           )
-
-        if load & (save_type == 'png'):
-            png = f'{out_dir}{name}.{description}_{nick}.enrichr.reports.png'
-            if os.path.isfile(png):
-                print(f'{description}_{nick}:')
-                image_display(png)
             if dotplot:
-                image_display(dtplt)
+                dtplt = f'{out_dir}{description}_{name}_dotplot.{save_type}'
+                gseapy.dotplot(res,
+                               title=f'{description} {name} DotPlot',
+                               top_term=20,
+                               ofname=dtplt
+                               )
+
+            if load & (save_type == 'png'):
+                png = f'{out_dir}{name}.{description}_{nick}.enrichr.reports.png'
+                if os.path.isfile(png):
+                    print(f'{description}_{nick}:')
+                    image_display(png)
+                if dotplot:
+                    image_display(dtplt)
+        except:
+            print('Error with enrichr')
 
     with open(f'{out_dir}{description}_genes.txt', 'w') as fp:
         for gene in set(gene_list):
@@ -869,7 +878,7 @@ def overlap_three(bed_dict, genome=None):
     sorted_dict['A_B_c'] = (master + A + B - C)
     sorted_dict['abC_'] = (master + C - A - B)
     sorted_dict['A_bC_'] = (master + A + C - B)
-    sorted_dict['aB_C'] = (master + B + C - A)
+    sorted_dict['aB_C_'] = (master + B + C - A)
     sorted_dict['A_B_C_'] = (master + A + B + C)
 
     labTup = tuple(key for key in sorted_dict.keys())
@@ -1269,7 +1278,7 @@ def ssh_check(ID, job_folder, prejob_files=None, wait=True, return_filetype=None
                     print(file.read())
 
 
-def deeptools(regions, signals, matrix_name, out_name, pegasus_folder, copy=False, title='', bps=(1500, 1500, 4000), d_type='center', scaled_names=('TSS', 'TES'), make=('matrix', 'heatmap', 'heatmap_group', 'profile', 'profile_group')):
+def deeptools(regions, signals, matrix_name, out_name, pegasus_folder, envelope='deeptools', copy=False, title='', bps=(1500, 1500, 4000), d_type='center', scaled_names=('TSS', 'TES'), make=('matrix', 'heatmap', 'heatmap_group', 'profile', 'profile_group')):
     '''
     Inputs
     ------
@@ -1278,6 +1287,7 @@ def deeptools(regions, signals, matrix_name, out_name, pegasus_folder, copy=Fals
     matrix_name: string of matrix name or matrix to be named (before .matrix.gz)
     out_name: name for output file
     tite: plot title (optional)
+    envelope: conda envelope
     bps: tuple of region width on either side of center or scaled.  center ignores last number.  default is (1500,1500,4000)
     type: 'center' or 'scaled'
     scaled_names: optional names for scaled start and end (default ('TSS','TES'))
@@ -1301,7 +1311,7 @@ def deeptools(regions, signals, matrix_name, out_name, pegasus_folder, copy=Fals
         deepHeat = f'--startLabel {scaled_names[0]} --endLabel {scaled_names[1]}'
         deepProf = f'--startLabel {scaled_names[0]} --endLabel {scaled_names[1]}'
 
-    cmd_list = ['module rm python share-rpms65', 'source activate deeptools']
+    cmd_list = ['module rm python share-rpms65', f'source activate {envelope}']
 
     if copy:
         print('Copying region files to pegasus...')
@@ -1378,7 +1388,7 @@ def order_cluster(dict_set, count_df, gene_column_name, title):
         linkage = hierarchy.linkage(reduced_df.drop(columns=[gene_column_name, 'group']), method='ward', metric='euclidean')
         order = hierarchy.dendrogram(linkage, no_plot=True, color_threshold=-np.inf)['leaves']
         gene_list = reduced_df.iloc[order][gene_column_name].tolist()
-        gene_index = df[df.gene_name.isin(gene_list)].index.tolist()
+        gene_index = df[df[gene_column_name].isin(gene_list)].index.tolist()
         out_list += gene_index
 
         gene_symbol = [gene.split('_')[-1] for gene in gene_list]
@@ -1552,7 +1562,26 @@ def hinton(df, filename, folder, max_weight=None):
     image_display(f'{folder}{filename}.png')
 
 
-def genomic_annotation_plots(dict_of_annotated_dfs, txdb_db, filename='Genomic_Annotation_Plot', bar_width=.75, figsize=(10, 5)):
+def genomic_annotation_plots(dict_of_annotated_dfs, txdb_db, 
+                             filename='Genomic_Annotation_Plot', 
+                             title='', 
+                             bar_width=.75, 
+                             figsize=(10, 5),
+                             order = ['Promoter (<=1kb)',
+                                      'Promoter (1-2kb)',
+                                      'Promoter (2-3kb)',
+                                      'Intron',
+                                      'Exon',
+                                      "3' UTR",
+                                      "5' UTR",
+                                      'Downstream (<1kb)',
+                                      'Downstream (1-2kb)'
+                                      'Downstream (2-3kb)',
+                                      'Distal Intergenic'],
+                             feature_col='annotation',
+                             palette='colorblind',
+                             plot_mode='fraction'
+                             ):
 
     '''
     from chipseeker annotation output as df
@@ -1562,21 +1591,26 @@ def genomic_annotation_plots(dict_of_annotated_dfs, txdb_db, filename='Genomic_A
     import seaborn as sns
 
     db = '(uc' if txdb_db == 'UCSC' else '(ENS'
-    order = ['Promoter (<=1kb)', 'Promoter (1-2kb)', 'Promoter (2-3kb)', 'Intron', 'Exon', "3' UTR", "5' UTR", 'Downstream (<1kb)', 'Downstream (1-2kb)', 'Downstream (2-3kb)', 'Distal Intergenic']
+
     Anno_df = pd.DataFrame(index=order)
 
     for name, df in dict_of_annotated_dfs.items():
-        df['annotation'] = [anno.replace(f' {db}', f'_{db}').split('_')[0] for anno in df.annotation.tolist()]
-        df_anno = df.groupby('annotation').count().iloc[:, 0]
-        Anno_df[name] = df_anno / df_anno.sum()
+        df[feature_col] = [anno.replace(f' {db}', f'_{db}').split('_')[0] for anno in df[feature_col].tolist()]
+        df_anno = df.groupby(feature_col).count().iloc[:, 0]
+        if plot_mode.lower() == 'fraction':
+            Anno_df[name] = df_anno / df_anno.sum()
+        else:
+            Anno_df[name] = df_anno
 
     Anno_df[Anno_df.isna()] = 0
 
-    sns.set(style='white', font='Arial', palette='colorblind', font_scale=1.2)
+    sns.set(style='white', font='Arial', font_scale=1.2)
+    sns.set_palette(palette, n_colors=len(order))
     f = plt.figure(figsize=figsize)
     Anno_df.T.plot(kind='barh', stacked=True, ax=f.gca(), width=bar_width, lw=0.1)
+    plt.title(title)
     plt.legend(loc=3, bbox_to_anchor=(1.0, 0))
-    plt.xlabel('Fraction')
+    plt.xlabel('Fraction' if plot_mode.lower() == 'fraction' else 'Peak Number')
     sns.despine()
     plt.tight_layout()
     plt.savefig(f'{filename}.png', dpi=300)
@@ -1602,7 +1636,7 @@ def extract_ENCODE_report_data(base_folder, report_type, out_folder='', histone=
         raise ValueError('This function only extracts summary info from AQUAS or Cromwell generated qc reports.')
 
     base_folder = val_folder(base_folder)
-    report_name = f'{base_folder}*/*report.html' if report_type.lower() == 'aquas' else f'{base_folder}*/cromwell-executions/chip/*/call-qc_report/execution/qc.html'
+    report_name = f'{base_folder}*/*report.html' if report_type.lower() == 'aquas' else f'{base_folder}*report.html'
 
     reports = glob.glob(report_name)
     out_folder = val_folder(out_folder)
@@ -1613,11 +1647,11 @@ def extract_ENCODE_report_data(base_folder, report_type, out_folder='', histone=
     results_df = pd.DataFrame(index=['Percent_mapped', 'Filtered_Uniquely_Mapped_Reads', 'Fraction_Duplicated', 'S_JS_Distance', 'PBC1', 'RSC', 'Overlap_Optimal_Peak_Number', 'FrIP_IDR', 'IDR_Peak_Number'])
 
     for file in tq(reports):
-        name = re.findall(r'.*/(.*)_report.html', file)[0] if report_type.lower() == 'aquas' else re.findall(r'.*/(.*)/cromwell-executions', file)[0]
+        name = re.findall(r'.*/(.*)_report.html', file)[0] if report_type.lower() == 'aquas' else re.findall(r'.*/(.*)_qc_report.html', file)[0]
         report = pd.read_html(file)
         series = pd.Series()
         series['Percent_mapped'] = report[1].iloc[7, 1] if report_type.lower() == 'aquas' else report[0].iloc[7, 1]
-        series['Filtered_Uniquely_Mapped_Reads'] = report[2].iloc[5, 1] if report_type.lower() == 'aquas' else  report[3].iloc[5,1]
+        series['Filtered_Uniquely_Mapped_Reads'] = report[2].iloc[5, 1] if report_type.lower() == 'aquas' else report[3].iloc[5, 1]
         series['Fraction_Duplicated'] = report[3].iloc[7, 1] if report_type.lower() == 'aquas' else report[1].iloc[7, 1]
         series['S_JS_Distance'] = report[4].iloc[7, 1] if report_type.lower() == 'aquas' else report[8].iloc[8, 1]
         series['PBC1'] = report[5].iloc[6, 1] if report_type.lower() == 'aquas' else report[2].iloc[6, 1]
@@ -1625,7 +1659,7 @@ def extract_ENCODE_report_data(base_folder, report_type, out_folder='', histone=
         series['Overlap_Optimal_Peak_Number'] = report[10].iloc[4, 1] if report_type.lower() == 'aquas' else report[4].iloc[4, 1]
 
         if histone is False:
-            series['FrIP_IDR'] = report[11].iloc[0, 1] if report_type.lower() == 'aquas' else report[7].iloc[1,1]
+            series['FrIP_IDR'] = report[11].iloc[0, 1] if report_type.lower() == 'aquas' else report[7].iloc[1, 1]
             series['IDR_Peak_Number'] = report[12].iloc[4, 1] if report_type.lower() == 'aquas' else report[4].iloc[4, 2]
         results_df[name] = series
 
@@ -2058,6 +2092,71 @@ def spike_in_plot(spike_df, sample_list, description, out_dir):
     sns.mpl.pyplot.savefig(f'{out_dir}{description.replaice(" ", "_")}.svg')
 
 
+def rename(file, name):
+    if os.path.isfile(file):
+        os.rename(file, name)
+
+
+def globber(file):
+    g = glob.glob(file)
+    return '' if g == [] else g[0]
+
+
+def ENCODE_clean(encode_folder, out_folder):
+    '''
+    folder is the ENCODE3 folder from chrome_chip that includes all crowmwell processed chipseq data.
+    '''
+
+    encode_folder = val_folder(encode_folder)
+    out_folder = val_folder(out_folder)
+
+    samples = os.listdir(encode_folder)
+
+    os.makedirs(f'{out_folder}bams', exist_ok=True)
+    os.makedirs(f'{out_folder}sample_peaks', exist_ok=True)
+    os.makedirs(f'{out_folder}nodup_bam', exist_ok=True)
+    os.makedirs(f'{out_folder}rep_overlap_peaks', exist_ok=True)
+    os.makedirs(f'{out_folder}rep_idr_peaks', exist_ok=True)
+    os.makedirs(f'{out_folder}reports', exist_ok=True)
+    os.makedirs(f'{out_folder}bws', exist_ok=True)
+    os.makedirs(f'{out_folder}jsons', exist_ok=True)
+
+    for sample in samples:
+        bw = globber(f'{encode_folder}{sample}/cromwell-executions/chip/*/call-macs2/shard-0/execution/*fc.signal.bigwig')
+        sample_peak = globber(f'{encode_folder}{sample}/cromwell-executions/chip/*/call-macs2/shard-0/execution/*bfilt.narrowPeak.gz')
+        nodup_bam = globber(f'{encode_folder}{sample}/cromwell-executions/chip/*/call-filter/shard-0/execution/*.nodup.bam')
+        nodup_bai = globber(f'{encode_folder}{sample}/cromwell-executions/chip/*/call-filter/shard-0/execution/*.nodup.bam.bai')
+        nodup_input_bam = globber(f'{encode_folder}{sample}/cromwell-executions/chip/*/call-filter_ctl/shard-0/execution/*nodup.bam')
+        nodup_input_bai = globber(f'{encode_folder}{sample}/cromwell-executions/chip/*/call-filter_ctl/shard-0/execution/*nodup.bam.bai')
+        bam = globber(f'{encode_folder}{sample}/cromwell-executions/chip/*/call-bwa/shard-0/execution/*.bam')
+        bai = globber(f'{encode_folder}{sample}/cromwell-executions/chip/*/call-bwa/shard-0/execution/*.bam.bai')
+        input_bam = globber(f'{encode_folder}{sample}/cromwell-executions/chip/*/call-bwa_ctl/shard-0/execution/*.bam')
+        input_bai = globber(f'{encode_folder}{sample}/cromwell-executions/chip/*/call-bwa_ctl/shard-0/execution/*.bam.bai')
+        optimal_peak = globber(f'{encode_folder}{sample}/cromwell-executions/chip/*/call-reproducibility_overlap/execution/optimal_peak.narrowPeak.gz')
+        conservative_peak = globber(f'{encode_folder}{sample}/cromwell-executions/chip/*/call-reproducibility_overlap/execution/conservative_peak.narrowPeak.gz')
+        idr_optimal_peak = globber(f'{encode_folder}{sample}/cromwell-executions/chip/*/call-reproducibility_idr/execution/optimal_peak.narrowPeak.gz')
+        idr_conservative_peak = globber(f'{encode_folder}{sample}/cromwell-executions/chip/*/call-reproducibility_idr/execution/conservative_peak.narrowPeak.gz')
+        qc_report = globber(f'{encode_folder}{sample}/cromwell-executions/chip/*/call-qc_report/execution/qc.html')
+        json = globber(f'{encode_folder}{sample}/*.json')
+
+        rename(bw, f'{out_folder}bws/{sample}.fc.signal.bigwig')
+        rename(sample_peak, f'{out_folder}sample_peaks/{sample}.500K.bfilt.narrowPeak.gz')
+        rename(nodup_bam, f'{out_folder}nodup_bam/{sample}.nodup.bam')
+        rename(nodup_bai, f'{out_folder}nodup_bam/{sample}.nodup.bam.bai')
+        rename(nodup_input_bam, f'{out_folder}nodup_bam/{sample}_background.nodup.bam')
+        rename(nodup_input_bai, f'{out_folder}nodup_bam/{sample}_background.nodup.bam.bai')
+        rename(bam, f'{out_folder}bams/{sample}.bam')
+        rename(bai, f'{out_folder}bams/{sample}.bam.bai')
+        rename(input_bam, f'{out_folder}bams/{sample}_background.bam')
+        rename(input_bai, f'{out_folder}bams/{sample}_background.bam.bai')
+        rename(optimal_peak, f'{out_folder}rep_overlap_peaks/{sample}.optimal_peak.narrowPeak.gz')
+        rename(conservative_peak, f'{out_folder}rep_overlap_peaks/{sample}.conservative_peak.narrowPeak.gz')
+        rename(idr_optimal_peak, f'{out_folder}rep_idr_peaks/{sample}.idr.optimal_peak.narrowPeak.gz')
+        rename(idr_conservative_peak, f'{out_folder}rep_idr_peaks/{sample}.idr.conservative_peak.narrowPeak.gz')
+        rename(qc_report, f'{out_folder}reports/{sample}_qc_report.html')
+        rename(json, f'{out_folder}jsons/{sample}_ENCODE3.json')
+
+
 '''
 def get_text_positions(x_data, y_data, txt_width, txt_height):
     import numpy as np
@@ -2189,4 +2288,5 @@ def chouchou(key, df):
     sns.despine()
     plt.savefig('{}_chou-chou_synergy_plot.png'.format(key), dpi=300)
     plt.savefig('{}_chou-chou_synergy_plot.svg'.format(key))
+
 '''
