@@ -383,6 +383,7 @@ def annotate_peaks(dict_of_dfs, folder, genome, db='UCSC', check=False, TSS=[-30
         for k,df in return_dict.items():
             df['Anno'] = df.annotation.apply(lambda x: 'Promoter' if x.split(' ')[0] == 'Promoter' else x)
             df['Anno'] = df.Anno.apply(lambda x: 'Intergenic' if x.split(' ')[0] in ['Downstream', 'Distal'] else x)
+            df['Anno'] = df.Anno.apply(lambda x: x.split(' ')[0] if x.split(' ')[0] in ['Intron', 'Exon'] else x)
 
     return return_dict
 
@@ -1278,7 +1279,22 @@ def ssh_check(ID, job_folder, prejob_files=None, wait=True, return_filetype=None
                     print(file.read())
 
 
-def deeptools(regions, signals, matrix_name, out_name, pegasus_folder, envelope='deeptools', copy=False, title='', bps=(1500, 1500, 4000), d_type='center', scaled_names=('TSS', 'TES'), make=('matrix', 'heatmap', 'heatmap_group', 'profile', 'profile_group')):
+def deeptools(regions, 
+              signals, 
+              matrix_name, 
+              out_name, 
+              pegasus_folder, 
+              envelope='deeptools', 
+              copy=False, 
+              title='', 
+              bps=(1500, 1500, 4000), 
+              d_type='center', 
+              scaled_names=('TSS', 'TES'), 
+              make=('matrix', 'heatmap', 'heatmap_group', 'profile', 'profile_group'),
+              missing_values_as_zero=True,
+              heatmap_kmeans=0,
+              save_sorted_regions='',
+              sort_regions='descend'):
     '''
     Inputs
     ------
@@ -1293,6 +1309,10 @@ def deeptools(regions, signals, matrix_name, out_name, pegasus_folder, envelope=
     scaled_names: optional names for scaled start and end (default ('TSS','TES'))
     make: tuple of deeptool commands.  options: matrix, heatmap, heatmap_group, profile, profile_group
     copy: bool.  Copy region and signal files to peagasus
+    missing_values_as_zero: True
+    heatmap_kmeans: Default 0.  kmeans clusters (int)
+    save_sorted_regions= '' (default: don't output) else filename for kmeans sorted region file
+    sort_regions= default descend.  'keep', 'no', ascend.
     Returns
     -------
     string of commands for ssh_job
@@ -1337,23 +1357,39 @@ def deeptools(regions, signals, matrix_name, out_name, pegasus_folder, envelope=
     if 'matrix' in make_lower:
         signal_name = ' '.join([f'''"{signal_name.replace('_', ' ')}"''' for signal_name in signals.keys()])
         computeMatrix = f"computeMatrix {deepMat} -a {bps[0]} -b {bps[1]} -p 4 -R {pegasus_region_path} -S {pegasus_signal_path} --samplesLabel {signal_name} -o {matrix_name}.matrix.gz"
+        if missing_values_as_zero:
+            computeMatrix += ' --missingDataAsZero'
         cmd_list.append(computeMatrix)
 
     if 'heatmap' in make_lower or 'heatmap_group' in make_lower:
         region_name = ' '.join([f'''"{region_name.replace('_', ' ')}"''' for region_name in regions.keys()])
-        plotHeatmap_base = f"plotHeatmap -m {matrix_name}.matrix.gz --dpi 300 {deepHeat} --regionsLabel {region_name} --plotTitle '{title.replace('_',' ')}' --whatToShow 'heatmap and colorbar' --colorMap Reds -out {out_name}_heatmap"
+        plotHeatmap_base = f"plotHeatmap -m {matrix_name}.matrix.gz --dpi 300 {deepHeat} --plotTitle '{title.replace('_',' ')}' --whatToShow 'heatmap and colorbar' --colorMap Reds"
+        if sort_regions != 'descend':
+            plotHeatmap_base += f' --sortRegions {sort_regions}'
+        if heatmap_kmeans > 0:
+            plotHeatmap_base += f' --kmeans {heatmap_kmeans}'
+        else:
+            plotHeatmap_base += f' --regionsLabel {region_name}'
+        if save_sorted_regions != '':
+            plotHeatmap_base += f' --outFileSortedRegions {save_sorted_regions}.txt'
         if 'heatmap' in make_lower:
-            cmd_list.append(f"{plotHeatmap_base}.png")
+            cmd_list.append(f"{plotHeatmap_base} -out {out_name}_heatmap.png")
         if 'heatmap_group' in make_lower:
-            cmd_list.append(f"{plotHeatmap_base}_perGroup.png --perGroup")
+            cmd_list.append(f"{plotHeatmap_base} -out {out_name}_heatmap_perGroup.png --perGroup")
 
     if 'profile' in make_lower or 'profile_group' in make_lower:
         region_name = ' '.join([f'''"{region_name.replace('_', ' ')}"''' for region_name in regions.keys()])
-        plotProfile_base = f"plotProfile -m {matrix_name}.matrix.gz --dpi 300 {deepProf} --plotTitle '{title.replace('_',' ')}' --regionsLabel {region_name} -out {out_name}_profile"
+        plotProfile_base = f"plotProfile -m {matrix_name}.matrix.gz --dpi 300 {deepProf} --plotTitle '{title.replace('_',' ')}'"
+        if heatmap_kmeans > 0:
+            plotProfile_base += f' --kmeans {heatmap_kmeans}'
+        else:
+            plotProfile_base += f' --regionsLabel {region_name}'
+        if save_sorted_regions != '':
+            plotProfile_base += f' --outFileSortedRegions {save_sorted_regions}_profile.txt'
         if 'profile' in make_lower:
-            cmd_list.append(f"{plotProfile_base}.png")
+            cmd_list.append(f"{plotProfile_base} -out {out_name}_profile.png")
         if 'profile_group' in make_lower:
-            cmd_list.append(f"{plotProfile_base}_perGroup.png --perGroup")
+            cmd_list.append(f"{plotProfile_base} -out {out_name}_profile_perGroup.png --perGroup")
 
     return cmd_list
 
@@ -1422,45 +1458,83 @@ def order_cluster(dict_set, count_df, gene_column_name, title):
     return out_list, ordered_df, clustermap
 
 
-def ranked_ordered_cluster(dict_set, in_df, gene_column_name, dict_sort_col, ascending=False):
+def ranked_ordered_cluster(dict_set, in_df, 
+                           gene_column_name, 
+                           dict_sort_col, 
+                           title='ranked_ordered_cluster', 
+                           group_name='Group',
+                           figsize=None, 
+                           ascending=False):
+    '''
+    Inputs
+    ------
+    dict_set: a dictary with a cluster name and a set of genes in that cluster for plotting.
+    df: a pandas dataframe with the normalized counts for each gene and samples (or average of samples) in row columns.
+              should also contain a column with the gene name.
+    gene_column_name: the pandas column specifying the gene name (used in the dict_set)
+    dict_sort_col: dictionary mapping cluster name with column to sort by in that cluster.
+    group_name: name (string) of the clusters (ie. Group, or Lineage)
+    title: title for the plot and for saving the file
+    figsize: tuple of figsize or default none for autogeneration
+    ascending: bool for sort order
+    Returns
+    ------
+    (Ordered Count DataFrame, Clustermap)
+    '''
+
     import matplotlib.pyplot as plt
     import seaborn as sns
     from scipy import stats
     import matplotlib.patches as mpatches
+    from dkfunctions import image_display
 
-    out_list = []
+    out_dfs = []
     df = in_df.copy()
-    df['group'] = 'NA'
-
+    df[group_name] = 'NA'
+    df.index = df[gene_column_name]
+    
     for name, genes in dict_set.items():
         reduced_df = df[df[gene_column_name].isin(genes)].copy()
-        zscored = reduced_df.drop(columns=[gene_column_name, 'group']).T.apply(stats.zscore).T.copy()
+        zscored = reduced_df.drop(columns=[gene_column_name, group_name]).T.apply(stats.zscore).T.copy()
         order = zscored.sort_values(by=dict_sort_col[name], ascending=ascending).index.tolist()
         gene_list = reduced_df.loc[order, gene_column_name].tolist()
-        out_list += gene_list
 
         gene_symbol = [gene.split('_')[-1] for gene in gene_list]
         with open(f'{name}_genes.txt', 'w') as file:
             for gene in gene_symbol:
                     file.write(f'{gene}\n')
 
-        df.loc[gene_list, 'group'] = name
+        reduced_df[group_name] = name
+        reduced_df = reduced_df.loc[gene_list]
+        out_dfs.append(reduced_df)
 
-    ordered_df = df.loc[out_list]
-    color_mapping = dict(zip(df.group.unique(), sns.hls_palette(len(df.group.unique()), s=.7)))
-    row_colors = df.group.map(color_mapping)
+    ordered_df = pd.concat(out_dfs)
+    
+    groups = ordered_df[group_name].unique()
+    color_mapping = dict(zip(groups, sns.color_palette("colorblind",len(groups))))
+    row_colors = ordered_df[group_name].map(color_mapping).tolist()
 
-    sns.set(context='notebook', font='Arial', palette='RdBu_r', style='white', rc={'figure.dpi': 300})
-    clustermap = sns.clustermap(ordered_df.loc[out_list].drop(columns=[gene_column_name, 'group']), z_score=0, row_colors=row_colors, row_cluster=False, col_cluster=False, cmap='RdBu_r', yticklabels=False)
-
+    sns.set(context='paper', font='Arial', palette='pastel', style='white', rc={'figure.dpi': 300}, font_scale=.9)
+    g = sns.clustermap(ordered_df.drop(columns=[gene_column_name, group_name]), 
+                       z_score=0, 
+                       row_colors=row_colors, 
+                       row_cluster=False, 
+                       col_cluster=False, 
+                       cmap='RdBu_r', 
+                       yticklabels=True,
+                       figsize=figsize)
+    
+    g.fig.suptitle(title)
+    
     legend = [mpatches.Patch(color=color, label=label.replace('_', ' ')) for label, color in color_mapping.items() if label != 'NA']
-    clustermap.ax_heatmap.legend(handles=legend, bbox_to_anchor=(-.1, .9, 0., .102))
-    clustermap.savefig('ranked_ordered_cluster.png')
+    g.ax_heatmap.legend(handles=legend, bbox_to_anchor=(-.1, .9, 0., .102),fontsize='large')
+    g.savefig(f'{title.replace(" ","_")}.png', dpi=300)
+    g.savefig(f'{title.replace(" ","_")}.svg')
 
     plt.close()
-    image_display('ranked_ordered_cluster.png')
+    image_display(f'{title.replace(" ","_")}.png')
 
-    return out_list, ordered_df, clustermap
+    return ordered_df, g
 
 
 def gsea_barplot(out_dir, pos_file, neg_file, gmt_name, max_number=20):
@@ -1562,22 +1636,22 @@ def hinton(df, filename, folder, max_weight=None):
     image_display(f'{folder}{filename}.png')
 
 
-def genomic_annotation_plots(dict_of_annotated_dfs, txdb_db, 
-                             filename='Genomic_Annotation_Plot', 
-                             title='', 
-                             bar_width=.75, 
+def genomic_annotation_plots(dict_of_annotated_dfs, txdb_db,
+                             filename='Genomic_Annotation_Plot',
+                             title='',
+                             bar_width=.75,
                              figsize=(10, 5),
-                             order = ['Promoter (<=1kb)',
-                                      'Promoter (1-2kb)',
-                                      'Promoter (2-3kb)',
-                                      'Intron',
-                                      'Exon',
-                                      "3' UTR",
-                                      "5' UTR",
-                                      'Downstream (<1kb)',
-                                      'Downstream (1-2kb)'
-                                      'Downstream (2-3kb)',
-                                      'Distal Intergenic'],
+                             order=['Promoter (<=1kb)',
+                                    'Promoter (1-2kb)',
+                                    'Promoter (2-3kb)',
+                                    'Intron',
+                                    'Exon',
+                                    "3' UTR",
+                                    "5' UTR",
+                                    'Downstream (<1kb)',
+                                    'Downstream (1-2kb)'
+                                    'Downstream (2-3kb)',
+                                    'Distal Intergenic'],
                              feature_col='annotation',
                              palette='colorblind',
                              plot_mode='fraction'
@@ -2155,6 +2229,37 @@ def ENCODE_clean(encode_folder, out_folder):
         rename(idr_conservative_peak, f'{out_folder}rep_idr_peaks/{sample}.idr.conservative_peak.narrowPeak.gz')
         rename(qc_report, f'{out_folder}reports/{sample}_qc_report.html')
         rename(json, f'{out_folder}jsons/{sample}_ENCODE3.json')
+
+
+def normal_equation(X,y):
+    '''
+    OLS using the Normal Equation.
+    inv(X.T.dot(X)).dot(X.T).dot(y)
+
+    Inputs:
+    X = array-like vector
+    y = array-like vector
+
+    Outputs:
+    theta_paramaters(list), xspace(array), yspace(array)
+    '''
+
+    import numpy as np
+
+    y = np.array(y)
+
+    rows = int(np.size(X))
+
+    #add the bias vector of ones
+    X = np.hstack((np.ones((rows,1)),
+                   np.reshape(x,(rows,1))
+                  ))
+
+    theta = np.linalg.inv(X.T.dot(X)).dot(X.T).dot(y)
+    xspace = np.linspace(X[:,1].min(), X[:,1].max())
+    yspace = np.array([theta[0] + theta[1]*x for x in xspace])
+
+    return theta, xspace, yspace
 
 
 '''
