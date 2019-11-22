@@ -1743,7 +1743,7 @@ def extract_ENCODE_report_data(base_folder, report_type, out_folder='', histone=
     return results_df
 
 
-def meme_ssh(folder, fasta, bed, meme_db, out_name):
+def meme_ssh(folder, fasta, bed, meme_db, out_name, markov=None):
     folder = folder if folder.endswith('/') else f'{folder}/'
     out_fasta = f'{folder}{bed.split("/")[-1].replace(".bed",".fasta")}'
 
@@ -1752,6 +1752,9 @@ def meme_ssh(folder, fasta, bed, meme_db, out_name):
                 f'bedtools getfasta -fi {fasta} -bed {bed} -fo {out_fasta}',
                 f'meme-chip -oc {out_name} -db {meme_db} -dna {out_fasta}'
                 ]
+
+    if markov:
+        meme_cmd[3] += f' -bfile {markov}'
 
     return ssh_job(meme_cmd, f'{out_name}_meme', folder, mem=3000)
 
