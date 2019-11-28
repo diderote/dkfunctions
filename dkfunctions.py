@@ -84,7 +84,11 @@ def alert_me(text):
 
 
 def tq_type():
-    jupyter = True if os.environ['_'].endswith('jupyter') else False
+    environ = os.environ
+    if '_' in environ.keys():
+        jupyter = True if os.environ['_'].endswith('jupyter') else False
+    elif 'MPLBACKEND' in environ.keys():
+        jupyter = True if 'ipykernel' in os.environ['MPLBACKEND'] else jupyter
     return tqdm_notebook if jupyter else tqdm
 
 
@@ -173,6 +177,172 @@ def peak_overlap_MC(df_dict, background, permutations=1000, seed=42, notebook=Tr
     print(f'Monte Carlo p-value estimate: {p}')
 
     return p
+
+
+'''
+Implementation of an Enrichr API with graphs
+Author: Daniel Karl
+
+'''
+
+def post_genes(gene_list, description):
+    '''
+    posts gene list to Enricr
+    
+    Returns
+    -------
+    dictionary: userListId, shortId
+    
+    '''
+    import json
+    import requests
+    
+    ENRICHR_URL = 'http://amp.pharm.mssm.edu/Enrichr/addList'
+    genes_str = '\n'.join(gene_list)
+    description = description
+    payload = {'list': (None, genes_str),
+               'description': (None, description)
+              }
+
+    response = requests.post(ENRICHR_URL, files=payload)
+    if not response.ok:
+        raise Exception('Error analyzing gene list')
+
+    return json.loads(response.text)
+
+
+def enrich(userListId, filename, gene_set_library):
+    '''
+    
+    Returns
+    -------
+    Text file of enrichment results
+    
+    '''
+    import requests
+    
+    ENRICHR_URL = 'http://amp.pharm.mssm.edu/Enrichr/export'
+    query_string = '?userListId=%s&filename=%s&backgroundType=%s'
+
+    url = ENRICHR_URL + query_string % (user_list_id, filename, gene_set_library)
+    response = requests.get(url, stream=True)
+
+    with open(filename, 'wb') as f:
+        for chunk in response.iter_content(chunk_size=1024): 
+            if chunk:
+                f.write(chunk)
+
+                
+def enrichr_barplot(filename, gene_library, out_dir, description, max_n=20, 
+                    q_thresh=0.05, color='slategray', display_image=True):
+    '''
+    Saves barplot from Enrichr results
+    
+    Paramaters
+    ----------
+    filename: enrichr response file
+    gene_library: gene set library to test
+    out_dir: result output folder
+    description: sample or gene set source name
+    max_n: max number of significant to display
+    q_thresh: qvalue threshold
+    color: plot color
+    dispaly_image: bool
+    
+    Return
+    ------
+    None
+    
+    '''
+    import seaborn as sns
+    import matplotlib.pyplot as plt
+    
+    enrichr = pd.read_csv(filename, header=0, sep="\t").sort_values(by=['Adjusted P-value']).head(max_n)
+    enrichr['Clean_term'] = enrichr.Term.apply(lambda x: x.split("_")[0])
+    enrichr['log_q'] = -np.log10(enrichr['Adjusted P-value'])
+
+    plt.clf()
+    sns.set(context='paper', font='Arial', font_scale=1.2, style='white', 
+            rc={'figure.dpi': 300, 'figure.figsize': (8, 6)}
+           )
+
+    fig, ax = plt.subplots()
+    fig.suptitle(f'{description} {gene_library.replace("_", " ")} enrichment\n(q<{q_thresh}, max {max_n})')
+
+    sig = df[df['Adjusted P-value'] <= q_thresh].copy() 
+
+    if len(sig) > 0:
+        g = sns.barplot(data=sig, x='log_q', y='Clean_term', color=color, ax=ax)
+        plt.xlabel('q-value (-log$_{10}$)')
+        plt.ylabel('Enrichment Term')
+        ymin, ymax = g.get_ylim()
+        g.vlines(x=-np.log10(q_thresh), ymin=ymin, ymax=ymax, colors='k', 
+                 linestyles='dashed', label=f'q = {q_thresh}')
+        g.legend()
+        sns.despine()
+    else:
+        ax.text(0.5, 0.5, 'No Significant Enrichments.',
+                horizontalalignment='center',
+                verticalalignment='center',
+                transform=ax.transAxes
+                )
+    try:
+        plt.tight_layout(h_pad=1, w_pad=1)
+    except ValueError:
+        pass
+
+    plt.subplots_adjust(top=0.88)
+    file = f'{out_dir}{description}_{gene_library}_enrichr.barplot.png'
+    fig.savefig(file, dpi=300)
+    plt.close()
+    image_display(file)
+
+
+def enrichr(dict_of_genelists, out_dir, dict_of_genelibraries=None, display=True, 
+            q_thresh=0.05, plot_color='slategray', max_n=20 ):
+    '''
+    Runs enrichment analysis through Enrichr and plots results
+    
+    Paramaters
+    ----------
+    dict_of_genelists: dictionary of description to genelists
+    dict_of_genelibraries: dictionary of enrichr gene libraries to test against
+        If None, will use default libraries
+    display: bool whether to display inline
+    q_thresh: qvalue threshold
+    plot_color: 
+    max_n:
+    
+    
+    '''
+    
+    out_dir = out_dir if out_dir.endswith('/') else f'{out_dir}/'
+    
+    gene_libraries ={'KEGG': 'KEGG_2016',
+                     'GO Biological Process': 'GO_Biological_Process_2018',
+                     'ChIP-X_Consensus_TFs': 'ENCODE_and_ChEA_Consensus_TFs_from_ChIP-X',
+                     'ChEA': 'ChEA_2016',
+                     'OMIM_Disease': 'OMIM_Disease'
+                     }
+    
+    libraries = gene_libraries if dict_of_genelibraries is None else dict_of_genelibraries
+    
+    generator = ((d,g,l,gl) for d,g in dict_of_genelists.items()
+                            for l, gl in gene_libraries.items()
+                )
+    
+    for description, genes, library, gene_library in generator:
+        filename=f'{out_dir}{description}_{library}.enrichr.txt'
+        
+        post = post_genes(genes, description)
+        get = enrich(post['userListId'], filename, gene_library)
+        enrichr_barplot(filename=filename, gene_library=library, out_dir=out_dir, description=description,
+                        max_n=max_n,q_thresh=q_thres, color=plot_color, display_image=display)
+    
+
+'''
+end enrichr
+'''
 
 
 def gsea_dotplot(df_dict, title='', qthresh=0.05, top_term=None, gene_sets=[], dotsize_factor=4, figsize=(4, 10), out_dir='.'):
@@ -386,60 +556,6 @@ def annotate_peaks(dict_of_dfs, folder, genome, db='UCSC', check=False, TSS=[-30
             df['Anno'] = df.Anno.apply(lambda x: x.split(' ')[0] if x.split(' ')[0] in ['Intron', 'Exon'] else x)
 
     return return_dict
-
-
-"""
-def plot_peak_genomic_annotation(dict_of_df, folder, genome):
-    '''
-    Plots genomic annotation graphs.
-    Inputs
-    ------
-    dict_of_df: dictionary of dataframes of bed type data
-    folder: output folder
-    Returns
-    -------
-    NoneType
-    '''
-    pandas2ri.activate()
-    ri.set_writeconsole_regular(rout_write)
-    ri.set_writeconsole_warnerror(rout_write)
-    species = ('Mmusculus' if genome.lower() == 'mm10' else 'Hsapiens')
-    TxDb = importr('TxDb.{}.UCSC.{}.knownGene'.format(species, genome.lower()))
-    txdb = ro.r('txdb <- TxDb.{}.UCSC.{}.knownGene'.format(species, genome.lower()))
-    if genome.lower() == 'mm10':
-        annoDb = importr('org.Mm.eg.db')
-        anno = 'org.Mm.eg.db'
-    elif genome.lower() == 'hg38' or genome.lower() == 'hg19':
-        annoDb = importr('org.Hs.eg.db')
-        anno = 'org.Hs.eg.db'
-    chipseeker = ro.packages.importr('ChIPseeker')
-    grdevices = ro.packages.importr('grDevices')
-    annotatePeak = ro.r('annotatePeak')
-    makeGR = ro.r("makeGRangesFromDataFrame")
-    as_df = ro.r("as.data.frame")
-    c = ro.r('c')
-    lapply= ro.r('lapply')
-    upsetplot = ro.r('upsetplot')
-    plot = ro.r('plot')
-    out = folder + 'all_peak_annotation'
-    os.makedirs(out, exist_ok=True)
-    GR={}
-    GR_anno={}
-    for key, df in dict_of_df.items():
-        col_len=len(df.columns)
-        df.columns = ["chr","start","end"] + list(range(col_len - 3))
-        GR[key] = makeGR(df)
-        GR_anno[key] = chipseeker.annotatePeak(GR[key], overlap='all', TxDb=txdb, annoDb="org.Hs.eg.db")
-        grdevices.png(file='{}/{}_annoBar.png'.format(out,key.replace(' ','_')), width=512, height=256)
-        plot(chipseeker.plotAnnoBar(GR_anno[key]))
-        grdevices.dev_off()
-        grdevices.png(file='{}/{}_TSS_Bar.png'.format(out,key.replace(' ','_')), width=512, height=256)
-        plot(chipseeker.plotDistToTSS(GR_anno[key]))
-        grdevices.dev_off()
-        grdevices.png(file='{}/{}_annoData.png'.format(out,key).replace(' ','_'), width=1000, height=500)
-        upsetplot(GR_anno[key], vennpie=True)
-        grdevices.dev_off()
-    """
 
 
 def plot_venn2(Series, string_name_of_overlap, folder):
@@ -770,72 +886,6 @@ def overlap_two(bed_dict, genome=None):
         return_dict = overlap_dict
 
     return return_dict
-
-
-def enrichr(gene_list, description, out_dir, scan=None, max_terms=10, load=False, figsize=(12, 6), dotplot=False, save_type='png'):
-    '''
-    Performs GO Molecular Function, GO Biological Process and KEGG enrichment on a gene list.
-    Uses enrichr.
-    Inputs
-    ------
-    gene_list: list of genes to perform enrichment on
-    description: string description for title
-    out_dir: output director
-    scan: dictionary with additional enrichr dbs to scan (http://amp.pharm.mssm.edu/Enrichr/#stats)
-    max_terms: limit return plot to this max
-    load: load results
-    figsize: change fig size
-    Returns
-    -------
-    None
-    '''
-    import gseapy
-
-    out_dir = val_folder(out_dir)
-    tq = tq_type()
-
-    testscan = {'KEGG': 'KEGG_2016',
-                'GO_biological_process': 'GO_Biological_Process_2017b',
-                'ChIP-X_Consensus_TFs': 'ENCODE_and_ChEA_Consensus_TFs_from_ChIP-X',
-                'ChEA': 'ChEA_2016',
-                'OMIM_Disease': 'OMIM_Disease'
-                }
-
-    if isinstance(scan, dict):
-        testscan = {**testscan, **scan}
-
-    for nick, name in tq(testscan.items()):
-        try:
-            res = gseapy.enrichr(gene_list=gene_list,
-                                 figsize=figsize,
-                                 top_term=max_terms,
-                                 description=f'{description}_{nick}',
-                                 gene_sets=name,
-                                 outdir=out_dir,
-                                 format=save_type
-                                 )
-
-            if dotplot:
-                dtplt = f'{out_dir}{description}_{name}_dotplot.{save_type}'
-                gseapy.dotplot(res,
-                               title=f'{description} {name} DotPlot',
-                               top_term=20,
-                               ofname=dtplt
-                               )
-
-            if load & (save_type == 'png'):
-                png = f'{out_dir}{name}.{description}_{nick}.enrichr.reports.png'
-                if os.path.isfile(png):
-                    print(f'{description}_{nick}:')
-                    image_display(png)
-                if dotplot:
-                    image_display(dtplt)
-        except:
-            print('Error with enrichr')
-
-    with open(f'{out_dir}{description}_genes.txt', 'w') as fp:
-        for gene in set(gene_list):
-            fp.write(f'{gene}\n')
 
 
 def overlap_three(bed_dict, genome=None):
@@ -1294,7 +1344,8 @@ def deeptools(regions,
               missing_values_as_zero=True,
               heatmap_kmeans=0,
               save_sorted_regions='',
-              sort_regions='descend'):
+              sort_regions='descend',
+              profile_colors=None):
     '''
     Inputs
     ------
@@ -1313,6 +1364,7 @@ def deeptools(regions,
     heatmap_kmeans: Default 0.  kmeans clusters (int)
     save_sorted_regions= '' (default: don't output) else filename for kmeans sorted region file
     sort_regions= default descend.  'keep', 'no', ascend.
+    profile_colors: default none.  list of colers per sample in sample order
     Returns
     -------
     string of commands for ssh_job
@@ -1384,6 +1436,8 @@ def deeptools(regions,
             plotProfile_base += f' --kmeans {heatmap_kmeans}'
         else:
             plotProfile_base += f' --regionsLabel {region_name}'
+        if profile_colors:
+            plotProfile_base += f' --colors {" ".join(profile_colors)}'
         if save_sorted_regions != '':
             plotProfile_base += f' --outFileSortedRegions {save_sorted_regions}_profile.txt'
         if 'profile' in make_lower:
@@ -2396,5 +2450,125 @@ def chouchou(key, df):
     sns.despine()
     plt.savefig('{}_chou-chou_synergy_plot.png'.format(key), dpi=300)
     plt.savefig('{}_chou-chou_synergy_plot.svg'.format(key))
+
+# def enrichr(gene_list, description, out_dir, scan=None, max_terms=10, load=False, figsize=(12, 6), dotplot=False, save_type='png'):
+#     '''
+#     Performs GO Molecular Function, GO Biological Process and KEGG enrichment on a gene list.
+#     Uses enrichr.
+#     Inputs
+#     ------
+#     gene_list: list of genes to perform enrichment on
+#     description: string description for title
+#     out_dir: output director
+#     scan: dictionary with additional enrichr dbs to scan (http://amp.pharm.mssm.edu/Enrichr/#stats)
+#     max_terms: limit return plot to this max
+#     load: load results
+#     figsize: change fig size
+#     Returns
+#     -------
+#     None
+#     '''
+#     import gseapy
+
+#     out_dir = val_folder(out_dir)
+#     tq = tq_type()
+
+#     testscan = {'KEGG': 'KEGG_2016',
+#                 'GO_biological_process': 'GO_Biological_Process_2017b',
+#                 'ChIP-X_Consensus_TFs': 'ENCODE_and_ChEA_Consensus_TFs_from_ChIP-X',
+#                 'ChEA': 'ChEA_2016',
+#                 'OMIM_Disease': 'OMIM_Disease'
+#                 }
+
+#     if isinstance(scan, dict):
+#         testscan = {**testscan, **scan}
+
+#     for nick, name in tq(testscan.items()):
+#         try:
+#             res = gseapy.enrichr(gene_list=gene_list,
+#                                  figsize=figsize,
+#                                  top_term=max_terms,
+#                                  description=f'{description}_{nick}',
+#                                  gene_sets=name,
+#                                  outdir=out_dir,
+#                                  format=save_type
+#                                  )
+
+#             if dotplot:
+#                 dtplt = f'{out_dir}{description}_{name}_dotplot.{save_type}'
+#                 gseapy.dotplot(res,
+#                                title=f'{description} {name} DotPlot',
+#                                top_term=20,
+#                                ofname=dtplt
+#                                )
+
+#             if load & (save_type == 'png'):
+#                 png = f'{out_dir}{name}.{description}_{nick}.enrichr.reports.png'
+#                 if os.path.isfile(png):
+#                     print(f'{description}_{nick}:')
+#                     image_display(png)
+#                 if dotplot:
+#                     image_display(dtplt)
+#         except:
+#             print('Error with enrichr')
+
+#     with open(f'{out_dir}{description}_genes.txt', 'w') as fp:
+#         for gene in set(gene_list):
+#             fp.write(f'{gene}\n')
+
+
+"""
+def plot_peak_genomic_annotation(dict_of_df, folder, genome):
+    '''
+    Plots genomic annotation graphs.
+    Inputs
+    ------
+    dict_of_df: dictionary of dataframes of bed type data
+    folder: output folder
+    Returns
+    -------
+    NoneType
+    '''
+    pandas2ri.activate()
+    ri.set_writeconsole_regular(rout_write)
+    ri.set_writeconsole_warnerror(rout_write)
+    species = ('Mmusculus' if genome.lower() == 'mm10' else 'Hsapiens')
+    TxDb = importr('TxDb.{}.UCSC.{}.knownGene'.format(species, genome.lower()))
+    txdb = ro.r('txdb <- TxDb.{}.UCSC.{}.knownGene'.format(species, genome.lower()))
+    if genome.lower() == 'mm10':
+        annoDb = importr('org.Mm.eg.db')
+        anno = 'org.Mm.eg.db'
+    elif genome.lower() == 'hg38' or genome.lower() == 'hg19':
+        annoDb = importr('org.Hs.eg.db')
+        anno = 'org.Hs.eg.db'
+    chipseeker = ro.packages.importr('ChIPseeker')
+    grdevices = ro.packages.importr('grDevices')
+    annotatePeak = ro.r('annotatePeak')
+    makeGR = ro.r("makeGRangesFromDataFrame")
+    as_df = ro.r("as.data.frame")
+    c = ro.r('c')
+    lapply= ro.r('lapply')
+    upsetplot = ro.r('upsetplot')
+    plot = ro.r('plot')
+    out = folder + 'all_peak_annotation'
+    os.makedirs(out, exist_ok=True)
+    GR={}
+    GR_anno={}
+    for key, df in dict_of_df.items():
+        col_len=len(df.columns)
+        df.columns = ["chr","start","end"] + list(range(col_len - 3))
+        GR[key] = makeGR(df)
+        GR_anno[key] = chipseeker.annotatePeak(GR[key], overlap='all', TxDb=txdb, annoDb="org.Hs.eg.db")
+        grdevices.png(file='{}/{}_annoBar.png'.format(out,key.replace(' ','_')), width=512, height=256)
+        plot(chipseeker.plotAnnoBar(GR_anno[key]))
+        grdevices.dev_off()
+        grdevices.png(file='{}/{}_TSS_Bar.png'.format(out,key.replace(' ','_')), width=512, height=256)
+        plot(chipseeker.plotDistToTSS(GR_anno[key]))
+        grdevices.dev_off()
+        grdevices.png(file='{}/{}_annoData.png'.format(out,key).replace(' ','_'), width=1000, height=500)
+        upsetplot(GR_anno[key], vennpie=True)
+        grdevices.dev_off()
+    """
+
 
 '''

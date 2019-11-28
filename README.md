@@ -15,6 +15,7 @@ commonly used bioinformatic functions
 - deeptools: generate deeptools scripts for remote exectution
 - order_cluster: supervised clustered heatmap
 - ranked_ordered_cluster:  supervised clustering and variable ranking heatmaps
+- enrichr: implementation of the enrichr API with barplot functionality
 - gsea_barplot: single gsea run summary barplot
 - hinton: hinton diagram generation
 - genomic_annotation_plots: generate annotation bar graphs
@@ -32,7 +33,6 @@ commonly used bioinformatic functions
 - ENCODE_clean: clean chipseq_encode pipeline folder
 - normal_equation: analytically solve linear regresision with normal equation
 - chouchou/bliss plots: synergy
-- enrichr
 - annotate_peaks
 - plot_venn2
 - plot_venn2_set
