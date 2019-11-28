@@ -257,9 +257,9 @@ def enrichr_barplot(filename, gene_library, out_dir, description, max_n=20,
     import seaborn as sns
     import matplotlib.pyplot as plt
     
-    enrichr = pd.read_csv(filename, header=0, sep="\t").sort_values(by=['Adjusted P-value']).head(max_n)
-    enrichr['Clean_term'] = enrichr.Term.apply(lambda x: x.split("_")[0])
-    enrichr['log_q'] = -np.log10(enrichr['Adjusted P-value'])
+    e_df = pd.read_csv(filename, header=0, sep="\t").sort_values(by=['Adjusted P-value']).head(max_n)
+    e_df['Clean_term'] = e_df.Term.apply(lambda x: x.split("_")[0])
+    e_df['log_q'] = -np.log10(e_df['Adjusted P-value'])
 
     plt.clf()
     sns.set(context='paper', font='Arial', font_scale=1.2, style='white', 
@@ -269,7 +269,7 @@ def enrichr_barplot(filename, gene_library, out_dir, description, max_n=20,
     fig, ax = plt.subplots()
     fig.suptitle(f'{description} {gene_library.replace("_", " ")} enrichment\n(q<{q_thresh}, max {max_n})')
 
-    sig = df[df['Adjusted P-value'] <= q_thresh].copy() 
+    sig = e_df[e_df['Adjusted P-value'] <= q_thresh].copy() 
 
     if len(sig) > 0:
         g = sns.barplot(data=sig, x='log_q', y='Clean_term', color=color, ax=ax)
