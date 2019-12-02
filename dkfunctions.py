@@ -198,8 +198,7 @@ def post_genes(gene_list, description):
     import requests
     
     ENRICHR_URL = 'http://amp.pharm.mssm.edu/Enrichr/addList'
-    genes_str = '\n'.join(gene_list)
-    description = description
+    genes_str = '\n'.join([str(x) for x in gene_list])
     payload = {'list': (None, genes_str),
                'description': (None, description)
               }
@@ -224,13 +223,15 @@ def enrich(userListId, filename, gene_set_library):
     ENRICHR_URL = 'http://amp.pharm.mssm.edu/Enrichr/export'
     query_string = '?userListId=%s&filename=%s&backgroundType=%s'
 
-    url = ENRICHR_URL + query_string % (user_list_id, filename, gene_set_library)
+    url = ENRICHR_URL + query_string % (userListId, filename, gene_set_library)
     response = requests.get(url, stream=True)
 
     with open(filename, 'wb') as f:
         for chunk in response.iter_content(chunk_size=1024): 
             if chunk:
                 f.write(chunk)
+
+    return response
 
                 
 def enrichr_barplot(filename, gene_library, out_dir, description, max_n=20, 
@@ -256,7 +257,7 @@ def enrichr_barplot(filename, gene_library, out_dir, description, max_n=20,
     '''
     import seaborn as sns
     import matplotlib.pyplot as plt
-    
+
     e_df = pd.read_csv(filename, header=0, sep="\t").sort_values(by=['Adjusted P-value']).head(max_n)
     e_df['Clean_term'] = e_df.Term.apply(lambda x: x.split("_")[0])
     e_df['log_q'] = -np.log10(e_df['Adjusted P-value'])
@@ -319,7 +320,7 @@ def enrichr(dict_of_genelists, out_dir, dict_of_genelibraries=None, display=True
     out_dir = out_dir if out_dir.endswith('/') else f'{out_dir}/'
     
     gene_libraries ={'KEGG': 'KEGG_2016',
-                     'GO Biological Process': 'GO_Biological_Process_2018',
+                     'GO_Biological_Process': 'GO_Biological_Process_2018',
                      'ChIP-X_Consensus_TFs': 'ENCODE_and_ChEA_Consensus_TFs_from_ChIP-X',
                      'ChEA': 'ChEA_2016',
                      'OMIM_Disease': 'OMIM_Disease'
@@ -328,7 +329,7 @@ def enrichr(dict_of_genelists, out_dir, dict_of_genelibraries=None, display=True
     libraries = gene_libraries if dict_of_genelibraries is None else dict_of_genelibraries
     
     generator = ((d,g,l,gl) for d,g in dict_of_genelists.items()
-                            for l, gl in gene_libraries.items()
+                            for l, gl in libraries.items()
                 )
     
     for description, genes, library, gene_library in generator:
@@ -336,8 +337,11 @@ def enrichr(dict_of_genelists, out_dir, dict_of_genelibraries=None, display=True
         
         post = post_genes(genes, description)
         get = enrich(post['userListId'], filename, gene_library)
-        enrichr_barplot(filename=filename, gene_library=library, out_dir=out_dir, description=description,
-                        max_n=max_n,q_thresh=q_thres, color=plot_color, display_image=display)
+        if get.ok:
+            enrichr_barplot(filename=filename, gene_library=library, out_dir=out_dir, description=description,
+                            max_n=max_n,q_thresh=q_thresh, color=plot_color, display_image=display)
+        else:
+            print(f'Enrichr error: {library}, {description}')
     
 
 '''
@@ -2515,8 +2519,6 @@ def chouchou(key, df):
 #     with open(f'{out_dir}{description}_genes.txt', 'w') as fp:
 #         for gene in set(gene_list):
 #             fp.write(f'{gene}\n')
-
-
 """
 def plot_peak_genomic_annotation(dict_of_df, folder, genome):
     '''
@@ -2568,7 +2570,4 @@ def plot_peak_genomic_annotation(dict_of_df, folder, genome):
         grdevices.png(file='{}/{}_annoData.png'.format(out,key).replace(' ','_'), width=1000, height=500)
         upsetplot(GR_anno[key], vennpie=True)
         grdevices.dev_off()
-    """
-
-
-'''
+"""
